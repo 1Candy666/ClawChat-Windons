@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;" />
+  <title>ClawChat</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <nav class="rail">
+      <div class="logo" title="ClawChat">🐾</div>
+      <button class="rail-btn" data-view="chats" title="聊天">💬<span>聊天</span></button>
+      <button class="rail-btn" data-view="agents" title="联系人">👥<span>联系人</span></button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" data-view="settings" title="设置">⚙️<span>设置</span></button>
+    </nav>
+    <aside class="list">
+      <div class="list-head">
+        <input id="search" placeholder="搜索" />
+        <button id="list-add" class="icon-btn" title="新建">＋</button>
+      </div>
+      <div id="list-body" class="list-body"></div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
