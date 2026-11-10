@@ -186,6 +186,7 @@ async function addFiles(chat, files) {
     try {
       const att = await window.claw.attSave(f.name || `截图_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.png`, await f.arrayBuffer());
       if (att.kind === 'image') att.thumb = await makeThumb(f);
+      if (att.extractError) toast(`「${att.name}」${att.extractError}`, 5000);
       list.push(att);
     } catch (err) { toast(`「${f.name}」添加失败：${String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 4000); }
   }
@@ -195,7 +196,7 @@ async function addFiles(chat, files) {
 function renderAttBar(chat) {
   const bar = $('#att-bar'); if (!bar) return;
   const list = pendingAtts.get(chat.id) || [];
-  bar.innerHTML = list.map((a, i) => `<div class="att-chip">${a.thumb ? `<img src="${a.thumb}">` : '<span>📄</span>'}<span class="n">${esc(a.name)}</span><span class="x" data-attdel="${i}">✕</span></div>`).join('');
+  bar.innerHTML = list.map((a, i) => `<div class="att-chip">${a.thumb ? `<img src="${a.thumb}">` : '<span>📄</span>'}<span class="n">${esc(a.name)}</span>${a.kind === 'doc' ? (a.extractError ? `<span class="warn" title="${esc(a.extractError)}">⚠ 读不了</span>` : `<span class="ok">✓ 已读取 ${(a.chars || 0) >= 10000 ? Math.round(a.chars / 10000) + ' 万' : a.chars || 0} 字</span>`) : ''}<span class="x" data-attdel="${i}">✕</span></div>`).join('');
   bar.style.display = list.length ? 'flex' : 'none';
 }
 function attsHTML(m) {
@@ -203,7 +204,7 @@ function attsHTML(m) {
   const imgs = m.attachments.filter((a) => a.thumb);
   const files = m.attachments.filter((a) => !a.thumb);
   return `${imgs.length ? `<div class="msg-imgs">${imgs.map((a) => `<img src="${a.thumb}" title="${esc(a.name)}" data-attopen="${esc(a.path)}">`).join('')}</div>` : ''}
-    ${files.map((a) => `<div class="msg-file" data-attopen="${esc(a.path)}">📄 ${esc(a.name)} <span>${fmtSize(a.size)}</span></div>`).join('')}`;
+    ${files.map((a) => `<div class="msg-file" data-attopen="${esc(a.path)}">📄 ${esc(a.name)} <span>${fmtSize(a.size)}${a.kind === 'doc' ? (a.extractError ? ' · ⚠ 文字提取失败' : ` · 已读取 ${(a.chars || 0).toLocaleString()} 字`) : ''}</span></div>`).join('')}`;
 }
 
 // ---------------- prompt building ----------------
@@ -222,6 +223,7 @@ function buildMessages(chat, agent) {
   }
   const hist = chat.messages.filter((m) => !m.error && !m.pending && hasContent(m) && m.type !== 'note' && m.type !== 'confirm').slice(-HISTORY_LIMIT);
   const liveImgMsgs = new Set(hist.filter((m) => m.attachments?.some((a) => a.kind === 'image')).slice(-3).map((m) => m.id));
+  const liveDocMsgs = new Set(hist.filter((m) => m.attachments?.some((a) => a.kind === 'text' || a.kind === 'doc')).slice(-2).map((m) => m.id));
   const out = [];
   const toParts = (c) => (Array.isArray(c) ? c : [{ type: 'text', text: c }]);
   for (const m of hist) {
@@ -229,7 +231,7 @@ function buildMessages(chat, agent) {
     if (m.from === agent.id) { role = 'assistant'; content = m.text; }
     else if (m.from === 'user') { role = 'user'; content = chat.type === 'group' ? `【${S.userName}】: ${m.text || '（发送了附件）'}` : (m.text || '（发送了附件）'); }
     else { role = 'user'; content = `【${agentById(m.from)?.name || '某成员'}】: ${m.text}`; }
-    if (m.attachments?.length && role === 'user') content = [{ type: 'text', text: content }, ...m.attachments.map((a) => ({ type: 'att', att: a, live: liveImgMsgs.has(m.id) }))];
+    if (m.attachments?.length && role === 'user') content = [{ type: 'text', text: content }, ...m.attachments.map((a) => ({ type: 'att', att: a, live: a.kind === 'image' ? liveImgMsgs.has(m.id) : liveDocMsgs.has(m.id) }))];
     const last = out[out.length - 1];
     if (last && last.role === role) {
       if (Array.isArray(last.content) || Array.isArray(content)) last.content = [...toParts(last.content), { type: 'text', text: '\n' }, ...toParts(content)];

@@ -1,6 +1,7 @@
 // Attachments: store user files locally and turn them into model input.
 const { app, ipcMain, shell } = require('electron');
 const path = require('path');
+const docread = require('./docread');
 const fs = require('fs');
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -13,7 +14,7 @@ function attDir() {
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
-function kindOf(name) { return IMG.test(name) ? 'image' : TEXT.test(name) ? 'text' : 'other'; }
+function kindOf(name) { return IMG.test(name) ? 'image' : TEXT.test(name) ? 'text' : docread.DOC_RE.test(name) ? 'doc' : 'other'; }
 function mimeOf(name) {
   const ext = path.extname(name).slice(1).toLowerCase();
   return { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' }[ext] || 'application/octet-stream';
@@ -47,8 +48,14 @@ function resolveMessages(messages, mode) {
         } else if (mode === 'cli' && p.live) {
           images.push(a.path); parts.push({ type: 'text', text: `[图片：${a.name}]` });
         } else parts.push({ type: 'text', text: `[图片：${a.name}]` });
+      } else if ((a.kind === 'text' || a.kind === 'doc') && !p.live) {
+        parts.push({ type: 'text', text: `[附件「${a.name}」的内容在前面已经发过，这里省略]` });
       } else if (a.kind === 'text') {
         parts.push({ type: 'text', text: `【附件 ${a.name}】\n\`\`\`\n${readText(a.path)}\n\`\`\`` });
+      } else if (a.kind === 'doc' && a.textPath && fs.existsSync(a.textPath)) {
+        parts.push({ type: 'text', text: `【附件 ${a.name}（已提取文字）】\n${fs.readFileSync(a.textPath, 'utf8')}\n【附件 ${a.name} 结束】` });
+      } else if (a.kind === 'doc') {
+        parts.push({ type: 'text', text: `[附件：${a.name}（文字提取失败：${a.extractError || '未知原因'}）]` });
       } else {
         parts.push({ type: 'text', text: `[附件：${a.name}（${Math.round(a.size / 1024)} KB，暂不支持读取这种格式的内容）]` });
       }
@@ -77,13 +84,22 @@ function copyInto(atts, dir) {
 }
 
 function register() {
-  ipcMain.handle('att:save', (_e, { name, data }) => {
+  ipcMain.handle('att:save', async (_e, { name, data }) => {
     const buf = Buffer.from(data);
     if (buf.length > MAX_BYTES) throw new Error(`文件太大（超过 ${MAX_BYTES / 1048576} MB）`);
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const p = path.join(attDir(), `${id}_${safeName(name)}`);
     fs.writeFileSync(p, buf);
-    return { id, name: safeName(name), path: p, size: buf.length, kind: kindOf(name) };
+    const att = { id, name: safeName(name), path: p, size: buf.length, kind: kindOf(name) };
+    if (att.kind === 'doc') {
+      try {
+        const text = await docread.extract(buf, name);
+        att.textPath = p + '.txt';
+        fs.writeFileSync(att.textPath, text, 'utf8');
+        att.chars = text.length;
+      } catch (err) { att.extractError = String(err.message || err).slice(0, 200); }
+    }
+    return att;
   });
   ipcMain.handle('att:open', (_e, p) => shell.openPath(p));
 }

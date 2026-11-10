@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-packager . ClawChat --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --ignore=^/dist --ignore=^/docs"
+    "build:win": "electron-packager . ClawChat --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --ignore=^/dist --ignore=^/docs --prune=true"
   },
   "keywords": [
     "ai",
@@ -26,5 +26,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/1Candy666/ClawChat-Windons"
+  },
+  "dependencies": {
+    "unpdf": "^2.1.0"
   }
 }
