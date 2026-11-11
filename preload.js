@@ -17,6 +17,8 @@ let seq = 0;
 contextBridge.exposeInMainWorld('claw', {
   load: () => ipcRenderer.invoke('store:load'),
   save: (data) => ipcRenderer.invoke('store:save', data),
+  encrypted: () => ipcRenderer.invoke('store:encrypted'),
+  saveText: (name, text) => ipcRenderer.invoke('file:saveText', { name, text }),
   dataPath: () => ipcRenderer.invoke('store:path'),
   openDataFolder: () => ipcRenderer.invoke('open:data-folder'),
   listModels: (cfg) => ipcRenderer.invoke('llm:models', cfg),

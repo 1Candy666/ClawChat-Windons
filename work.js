@@ -122,7 +122,7 @@ function startJob(sender, job) {
   jobs.set(job.jobId, rec);
   send({ type: 'log', entry: { kind: 'info', text: `开始执行 · ${cmd} · ${job.level === 'full' ? '完全访问' : '仅工作文件夹可写'} · ${job.dir}` } });
 
-  let buf = '', errTail = '', lastErr = '', finalText = '', changed = new Set();
+  let buf = '', errTail = '', lastErr = '', finalText = '', changed = new Set(), usage;
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (d) => {
     buf += d;
@@ -140,6 +140,7 @@ function startJob(sender, job) {
             if (inp.file_path && /Edit|Write/.test(c.name)) changed.add(inp.file_path);
           } else if (c.type === 'text' && c.text.trim()) send({ type: 'log', entry: { kind: 'think', text: '💬 ' + c.text.trim().slice(0, 160) } });
         }
+        if (j.type === 'result' && j.usage) usage = { in: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0) + (j.usage.cache_creation_input_tokens || 0), out: j.usage.output_tokens || 0 };
         if (j.type === 'result') { if (j.is_error) lastErr = j.result || j.subtype; else finalText = j.result || finalText; }
         continue;
       }
@@ -149,7 +150,8 @@ function startJob(sender, job) {
         if (it.type === 'file_change') for (const c of it.changes || []) changed.add(path.isAbsolute(c.path) ? c.path : path.join(job.dir, c.path));
         const e = describeItem(it, j.type.split('.')[1]);
         if (e) send({ type: 'log', entry: e });
-      } else if (j.type === 'turn.failed') lastErr = j.error?.message || 'Codex 执行失败';
+      } else if (j.type === 'turn.completed' && j.usage) usage = { in: j.usage.input_tokens || 0, out: j.usage.output_tokens || 0 };
+      else if (j.type === 'turn.failed') lastErr = j.error?.message || 'Codex 执行失败';
       else if (j.type === 'error' && !/Reconnecting/i.test(j.message || '')) lastErr = j.message;
     }
   });
@@ -164,14 +166,14 @@ function startJob(sender, job) {
     let imgs = 0;
     const out = files.slice(0, 30).map((f) => ({ path: f.path, rel: path.relative(job.dir, f.path), size: f.size, img: IMG.test(f.path) && imgs++ < 6 ? thumb(f.path) : null }));
     const secs = Math.round((Date.now() - started) / 1000);
-    if (rec.aborted) return send({ type: 'done', stopped: true, text: finalText, files: out, secs });
+    if (rec.aborted) return send({ type: 'done', stopped: true, text: finalText, files: out, secs, usage });
     if (code !== 0 && !finalText) {
       let msg = lastErr || errTail.trim().split('\n').slice(-4).join('\n') || `进程退出码 ${code}`;
       if (/not recognized|not found|ENOENT/i.test(msg)) msg = `找不到命令「${cmd}」。\n${msg}`;
       if (/sandbox/i.test(msg)) msg += '\n（可能是 Windows 沙箱不可用：可在联系人「工作模式」里改成「完全访问」，或检查 Codex 版本）';
-      return send({ type: 'done', error: msg.slice(0, 1200), files: out, secs });
+      return send({ type: 'done', error: msg.slice(0, 1200), files: out, secs, usage });
     }
-    send({ type: 'done', text: finalText, files: out, secs });
+    send({ type: 'done', text: finalText, files: out, secs, usage });
   });
   child.stdin.on('error', () => {});
   child.stdin.end(job.prompt, 'utf8');

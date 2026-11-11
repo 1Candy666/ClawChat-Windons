@@ -21,6 +21,32 @@ const collabJobs = new Map(); // jobId -> handler(ev)
 const collabTimers = new Map();
 
 class CollabStop extends Error {}
+class CollabBudget extends Error {}
+
+// ---------------- usage ----------------
+function estTokens(str) {
+  const t = String(str || '');
+  const cjk = (t.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length;
+  return Math.round(cjk * 0.7 + (t.length - cjk) / 3.5);
+}
+function mkUsage(agent, reported, inText, outText) {
+  const p = providerById(agent.providerId) || providerById(S.defaultProviderId) || S.providers[0];
+  const u = reported && (reported.in || reported.out) ? { in: reported.in || 0, out: reported.out || 0 } : { in: estTokens(inText), out: estTokens(outText), est: true };
+  if (p && (+p.priceIn || +p.priceOut)) u.cost = (u.in * (+p.priceIn || 0) + u.out * (+p.priceOut || 0)) / 1e6;
+  return u;
+}
+function addUsage(total, u) {
+  if (!total || !u) return;
+  total.in = (total.in || 0) + (u.in || 0); total.out = (total.out || 0) + (u.out || 0);
+  if (u.cost != null) total.cost = (total.cost || 0) + u.cost;
+  if (u.est) total.est = true;
+}
+function fmtUsage(u) {
+  if (!u || !(u.in || u.out)) return '';
+  const k = (n) => (n >= 10000 ? (n / 10000).toFixed(1) + ' 万' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
+  return `${u.est ? '约 ' : ''}输入 ${k(u.in)} / 输出 ${k(u.out)} tokens${u.cost != null ? ` · ¥${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(2)}` : ''}`;
+}
+const usageTotal = (u) => (u?.in || 0) + (u?.out || 0);
 
 // ---------------- helpers ----------------
 function collabLead(chat) {
@@ -49,7 +75,7 @@ function parseJSON(text) {
 const asText = (v) => (Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('；') : v == null ? '' : String(v)).trim();
 
 function newCollabRun(m) {
-  const run = { stop: false, reqIds: new Set(), jobIds: new Set() };
+  const run = { stop: false, reqIds: new Set(), jobIds: new Set(), m };
   collabRuns.set(m.id, run);
   return run;
 }
@@ -66,7 +92,9 @@ function stopCollabIn(chat) {
   return n;
 }
 
-function callAgent(agent, sys, user, { run, attachments, temperature, onText, onReasoning } = {}) {
+function callAgent(agent, sys, user, { run, attachments, temperature, onText, onReasoning, acct } = {}) {
+  const bm = run?.m;
+  if (bm?.budget && usageTotal(bm.usage) >= bm.budget) return Promise.reject(new CollabBudget());
   const llm = resolveLLM(agent);
   if (!llm) return Promise.resolve({ text: '', error: `「${agent.name}」没有可用的模型服务` });
   let text = '', reasoning = '';
@@ -83,11 +111,14 @@ function callAgent(agent, sys, user, { run, attachments, temperature, onText, on
   return promise.then((res) => {
     run?.reqIds.delete(reqId);
     if (res.replace) text = res.replace;
-    return { text: text.trim(), reasoning, error: res.error, aborted: res.aborted, model: llm.model };
+    const usage = mkUsage(agent, res.usage, sys + user, text + reasoning);
+    for (const o of acct || []) addUsage(o, usage);
+    return { text: text.trim(), reasoning, error: res.error, aborted: res.aborted, model: llm.model, usage };
   });
 }
 
 function runWorkJob(run, a, prompt, attachments, onLog) {
+  if (run.m?.budget && usageTotal(run.m.usage) >= run.m.budget) return Promise.reject(new CollabBudget());
   return new Promise((resolve) => {
     const p = providerById(a.providerId) || providerById(S.defaultProviderId) || S.providers[0];
     const jobId = uid('j');
@@ -95,7 +126,7 @@ function runWorkJob(run, a, prompt, attachments, onLog) {
       if (ev.type === 'log') onLog?.(ev.entry);
       if (ev.type === 'done') {
         collabJobs.delete(jobId); run.jobIds.delete(jobId);
-        resolve({ text: (ev.text || '').trim(), files: ev.files || [], error: ev.error, aborted: ev.stopped, secs: ev.secs });
+        resolve({ text: (ev.text || '').trim(), files: ev.files || [], error: ev.error, aborted: ev.stopped, secs: ev.secs, usage: mkUsage(a, ev.usage, prompt, ev.text) });
       }
     });
     run.jobIds.add(jobId);
@@ -114,6 +145,7 @@ function originalBlock(m) {
   let s = `【用户的原始要求（原话，一切以此为准）】\n${m.request}`;
   if (m.attachments?.length) s += `\n（用户附带了文件：${m.attachments.map((a) => a.name).join('、')}，内容附在本消息后面）`;
   if (m.supplements?.length) s += `\n\n【用户的补充说明（原话）】\n${m.supplements.map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
+  if (m.archive?.trim()) s += `\n\n【项目档案（这个群长期共享的背景资料，用户维护）】\n${m.archive.trim().slice(0, 8000)}`;
   return s;
 }
 function leadSys(lead) {
@@ -134,7 +166,7 @@ ${chatContext(chat, m) || '（无）'}
 【团队成员】
 ${members.map(rosterLine).join('\n')}
 
-请制定协作计划。原则：
+${m.template ? `【沿用的流程模板「${m.template.name}」】\n这类任务之前按下面的分工做得不错。请沿用它的任务划分、负责人和依赖关系（负责人不在团队里时换成最合适的成员），并根据这次的要求重写每张任务单的具体内容：\n${m.template.tasks.map((t) => `${t.id}｜负责人：${t.assignee}｜${t.title}｜目标：${t.goal}｜交付：${t.deliverable}｜合格标准：${t.acceptance}${t.depends_on?.length ? '｜依赖：' + t.depends_on.join('、') : ''}${t.execute ? '｜需要动手执行' : ''}`).join('\n')}\n\n` : ''}请制定协作计划。原则：
 1. 先写出你对用户意图的理解。只有当缺少某个信息就完全无法开展时，才把问题写进 questions_for_user；能合理假设的就自己假设，并写进任务单的"已经确定的事"。
 2. 按成员特长派活：量大、重复的活给便宜的成员；关键判断和难题留给聪明的成员（包括你自己）；需要成稿的给写手。简单任务不要硬拆，只有 1 个任务也可以。最多 ${COLLAB_MAX_TASKS} 个任务。
 3. 每张任务单必须自成一体：接收者看不到聊天记录，只能看到用户原话、附件、这张任务单，以及它依赖的任务的完整产出。所以背景、约束、判断标准都要写清楚，不要写"如上所述""按之前说的"。
@@ -218,14 +250,15 @@ ${cl || '（无）'}
 }
 
 // ---------------- engine ----------------
-function collabStart(chat, text, attachments) {
+function collabStart(chat, text, attachments, template) {
   const lead = collabLead(chat);
   if (chat.type !== 'group' || chatMembers(chat).length < 2) {
     chat.messages.push({ id: uid('m'), type: 'note', from: 'system', text: '协作模式需要在至少有 2 个成员的群里使用。', ts: Date.now() });
     return;
   }
   const m = { id: uid('m'), type: 'collab', from: lead.id, request: text.match(COLLAB_RE)[2].trim(), attachments: attachments || [], supplements: [],
-    status: 'planning', tasks: [], checklist: [], understanding: '', questions: [], final: '', text: '', round: 0, ts: Date.now() };
+    status: 'planning', tasks: [], checklist: [], understanding: '', questions: [], final: '', text: '', round: 0, ts: Date.now(),
+    usage: {}, budget: chat.collabBudget ?? 500000, template: template || null };
   chat.messages.push(m);
   collabPlan(chat, m);
 }
@@ -234,12 +267,13 @@ async function collabPlan(chat, m) {
   const run = newCollabRun(m);
   const lead = agentById(m.from) || collabLead(chat);
   m.status = 'planning'; m.errorText = ''; m.tasks = []; m.checklist = []; m.final = ''; m.text = ''; m.round = 0;
+  m.usage = m.usage || {}; m.archive = chat.archive || '';
   save(); renderCollab(chat, m, true);
   try {
     let plan = null, lastErr = '';
     for (let i = 0; i < 2 && !plan; i++) {
       const r = await callAgent(lead, leadSys(lead), planPrompt(chat, m) + (lastErr ? `\n\n（你上一次的输出无法解析：${lastErr}。这次请只输出合法的 JSON。）` : ''),
-        { run, attachments: m.attachments, temperature: 0.3, onReasoning: (t) => { m.reasoning = t; renderCollab(chat, m); } });
+        { run, acct: [m.usage], attachments: m.attachments, temperature: 0.3, onReasoning: (t) => { m.reasoning = t; renderCollab(chat, m); } });
       checkStop(run);
       if (r.error) throw new Error(r.error);
       try {
@@ -263,7 +297,9 @@ async function collabPlan(chat, m) {
     m.questions = (Array.isArray(plan.questions_for_user) ? plan.questions_for_user : []).map(asText).filter(Boolean).slice(0, 5);
     m.status = m.questions.length ? 'ask' : 'planned';
   } catch (e) {
-    if (e instanceof CollabStop) m.status = 'stopped'; else { m.status = 'error'; m.errorText = String(e.message || e); }
+    if (e instanceof CollabStop) m.status = 'stopped';
+    else if (e instanceof CollabBudget) { m.status = 'error'; m.overBudget = true; m.errorText = `已达到这次协作的用量上限（${(m.budget / 10000).toFixed(0)} 万 tokens），已自动暂停。点「继续执行」会再追加一份额度；上限可以在群设置里改。`; }
+    else { m.status = 'error'; m.errorText = String(e.message || e); }
   } finally {
     collabRuns.delete(m.id);
     chat.updated = Date.now(); save(); renderList(); renderCollab(chat, m, true);
@@ -282,8 +318,9 @@ async function runTask(chat, m, t, run) {
     t.log = [];
     r = await runWorkJob(run, a, workerSys(a, lead) + '\n\n' + workerPrompt(m, t, true, a), m.attachments, (e) => { t.log.push(e); if (t.log.length > 300) t.log.shift(); renderCollab(chat, m); });
     t.files = r.files; t.secs = r.secs;
+    t.usage = t.usage || {}; addUsage(t.usage, r.usage); addUsage(m.usage, r.usage);
   } else {
-    r = await callAgent(a, workerSys(a, lead), workerPrompt(m, t, false, a), { run, attachments: m.attachments, temperature: a.temperature,
+    r = await callAgent(a, workerSys(a, lead), workerPrompt(m, t, false, a), { run, acct: [m.usage, (t.usage = t.usage || {})], attachments: m.attachments, temperature: a.temperature,
       onText: (x) => { t.live = x; renderCollab(chat, m); }, onReasoning: (x) => { t.reasoning = x; renderCollab(chat, m); } });
     t.model = r.model;
   }
@@ -294,7 +331,7 @@ async function runTask(chat, m, t, run) {
   if (p.question && !t.question) {
     t.question = p.question; t.status = 'asking'; renderCollab(chat, m, true);
     const ans = await callAgent(lead, leadSys(lead), `${originalBlock(m)}\n\n你派给「${a.name}」的任务单 ${t.id}：${t.title}\n${briefText(t)}\n\n「${a.name}」开工前向你提问：\n${t.question}\n\n请直接、具体地回答。如果你也不确定，给出你的最佳判断并说明这是假设。`,
-      { run, attachments: m.attachments, temperature: 0.3 });
+      { run, acct: [m.usage], attachments: m.attachments, temperature: 0.3 });
     checkStop(run);
     t.answer = ans.text || '（主管没能回答，请按最合理的假设继续，并把假设写出来）';
     return runTask(chat, m, t, run);
@@ -326,7 +363,8 @@ async function collabExecute(chat, m) {
   const lead = agentById(m.from) || collabLead(chat);
   const t0 = Date.now();
   const maxRedo = chat.collabRedo ?? 1;
-  m.status = 'running'; m.errorText = '';
+  m.status = 'running'; m.errorText = ''; m.usage = m.usage || {};
+  if (m.overBudget) { m.budget = (m.budget || 0) + (chat.collabBudget ?? 500000); m.overBudget = false; }
   save(); renderList(); renderCollab(chat, m, true);
   try {
     await runWaves(chat, m, run);
@@ -338,7 +376,7 @@ async function collabExecute(chat, m) {
       for (;;) {
         m.status = 'reviewing'; renderCollab(chat, m, true);
         const canRedo = m.round < maxRedo;
-        const r = await callAgent(lead, leadSys(lead), reviewPrompt(m, canRedo), { run, attachments: m.attachments, temperature: 0.2 });
+        const r = await callAgent(lead, leadSys(lead), reviewPrompt(m, canRedo), { run, acct: [m.usage], attachments: m.attachments, temperature: 0.2 });
         checkStop(run);
         let rv = null;
         try { rv = parseJSON(r.text); } catch {}
@@ -352,7 +390,7 @@ async function collabExecute(chat, m) {
         checkStop(run);
       }
       m.status = 'writing'; m.final = ''; renderCollab(chat, m, true);
-      const f = await callAgent(lead, leadSys(lead), finalPrompt(m), { run, attachments: m.attachments, temperature: 0.4, onText: (x) => { m.final = x; renderCollab(chat, m); } });
+      const f = await callAgent(lead, leadSys(lead), finalPrompt(m), { run, acct: [m.usage], attachments: m.attachments, temperature: 0.4, onText: (x) => { m.final = x; renderCollab(chat, m); } });
       checkStop(run);
       if (f.error || !f.text) throw new Error('主管汇总失败：' + (f.error || '没有返回内容') + '。各成员的交付都保留在上面的任务里。');
       m.final = f.text;
@@ -360,7 +398,9 @@ async function collabExecute(chat, m) {
     m.text = m.final; m.status = 'done';
   } catch (e) {
     for (const t of m.tasks) if (t.status === 'running' || t.status === 'asking') { t.status = 'pending'; delete t.live; }
-    if (e instanceof CollabStop) m.status = 'stopped'; else { m.status = 'error'; m.errorText = String(e.message || e); }
+    if (e instanceof CollabStop) m.status = 'stopped';
+    else if (e instanceof CollabBudget) { m.status = 'error'; m.overBudget = true; m.errorText = `已达到这次协作的用量上限（${(m.budget / 10000).toFixed(0)} 万 tokens），已自动暂停。点「继续执行」会再追加一份额度；上限可以在群设置里改。`; }
+    else { m.status = 'error'; m.errorText = String(e.message || e); }
   } finally {
     collabRuns.delete(m.id);
     m.secs = (m.secs || 0) + Math.round((Date.now() - t0) / 1000);
@@ -397,7 +437,7 @@ function taskHTML(chat, m, t, open) {
   const key = 't-' + t.id;
   const tail = t.live ? t.live.replace(/\s+/g, ' ').slice(-70) : t.log?.length && t.status === 'running' ? t.log[t.log.length - 1].text.slice(0, 70) : '';
   return `<details class="cb-task st-${t.status}" data-key="${key}" ${open.has(key) ? 'open' : ''}>
-    <summary>${avatarHTML(a, 'sm')}<span class="cb-tt"><span><b>${t.id}</b> ${esc(t.title)}</span><span class="cb-who">${esc(a?.name || '?')}${t.execute ? ' · 🛠 动手' : ''}${t.redo ? ' · 重做第 ' + t.redo + ' 次' : ''}${t.depends_on?.length ? ' · 依赖 ' + t.depends_on.join('、') : ''}</span>
+    <summary>${avatarHTML(a, 'sm')}<span class="cb-tt"><span><b>${t.id}</b> ${esc(t.title)}</span><span class="cb-who">${esc(a?.name || '?')}${t.execute ? ' · 🛠 动手' : ''}${t.redo ? ' · 重做第 ' + t.redo + ' 次' : ''}${t.depends_on?.length ? ' · 依赖 ' + t.depends_on.join('、') : ''}${fmtUsage(t.usage) ? ' · ' + fmtUsage(t.usage) : ''}</span>
       ${tail ? `<span class="cb-live">${esc(tail)}</span>` : ''}</span><span class="badge b-${t.status}">${st}</span></summary>
     <div class="cb-body">
       ${t.warn ? `<div class="cb-warn">⚠ ${esc(t.warn)}</div>` : ''}
@@ -428,7 +468,7 @@ function collabHTML(chat, m, open = new Set()) {
   else if (m.status === 'ask') foot = `${supBox('在这里回答主管的问题', '回答并重新规划')}<div class="row-actions" style="margin-top:8px"><button class="btn" data-cact="go">不回答，按现在的计划开始</button><button class="btn" data-cact="cancel">取消</button></div>`;
   else if (m.status === 'error' || m.status === 'stopped') foot = `<div class="row-actions">${tasks.length ? '<button class="btn primary" data-cact="go">继续执行（已完成的任务不重做）</button>' : ''}<button class="btn" data-cact="replan">重新规划</button></div>`;
   return `<div class="collab" data-mid="${m.id}">
-    <div class="cb-head">${avatarHTML(lead, 'sm')}<span><b>🤝 协作任务</b><span class="cb-who">主管：${esc(lead?.name || '?')}${tasks.length ? ` · ${doneN}/${tasks.length} 个任务已交付` : ''}${m.secs ? ` · ${m.secs} 秒` : ''}</span></span>
+    <div class="cb-head">${avatarHTML(lead, 'sm')}<span><b>🤝 协作任务</b><span class="cb-who">主管：${esc(lead?.name || '?')}${tasks.length ? ` · ${doneN}/${tasks.length} 个任务已交付` : ''}${m.secs ? ` · ${m.secs} 秒` : ''}${fmtUsage(m.usage) ? ' · ' + fmtUsage(m.usage) : ''}</span></span>
       <span class="badge">${st}</span>${active ? '<button class="btn danger" data-cact="stop" style="padding:2px 10px">停止</button>' : ''}</div>
     <div class="cb-sec">你的原话</div><div class="cb-req">${esc(m.request)}${m.attachments?.length ? `<div class="cb-who" style="margin:4px 0 0">📎 ${esc(m.attachments.map((a) => a.name).join('、'))}</div>` : ''}${(m.supplements || []).map((x) => `<div class="cb-supp">补充：${esc(x)}</div>`).join('')}</div>
     ${m.understanding ? `<div class="cb-sec">主管的理解</div><div class="cb-note">${esc(m.understanding)}</div>` : ''}
@@ -437,7 +477,7 @@ function collabHTML(chat, m, open = new Set()) {
     ${tasks.length ? `<div class="cb-sec">任务板</div>${tasks.map((t) => taskHTML(chat, m, t, open)).join('')}` : ''}
     ${m.checklist?.length ? `<details data-key="check" ${open.has('check') || m.checklist.some((c) => !c.met) ? 'open' : ''}><summary>对照原话验收（${m.checklist.filter((c) => c.met).length}/${m.checklist.length} 条满足）</summary><div class="cb-check">${m.checklist.map((c) => `<div class="${c.met ? 'ok' : 'no'}">${c.met ? '✓' : '✗'} ${esc(c.requirement)}${c.note ? `<span>${esc(c.note)}</span>` : ''}</div>`).join('')}</div></details>` : ''}
     ${m.errorText ? `<div class="bubble err" style="margin-top:8px">${esc(m.errorText)}</div>` : ''}
-    ${m.final ? `<div class="cb-sec">最终结果</div><div class="cb-final">${md(m.final, chatMembers(chat))}</div>${m.status === 'done' ? '<div class="tools" style="display:flex"><span data-cact="copy">复制结果</span></div>' : ''}` : ''}
+    ${m.final ? `<div class="cb-sec">最终结果</div><div class="cb-final">${md(m.final, chatMembers(chat))}</div>${m.status === 'done' ? '<div class="tools" style="display:flex"><span data-cact="copy">复制结果</span><span data-cact="export">导出为文件</span><span data-cact="archive">把结论记入项目档案</span><span data-cact="tpl">把这次分工存为模板</span></div>' : ''}` : ''}
     ${foot}
   </div>`;
 }
@@ -447,6 +487,9 @@ function collabAction(chat, m, act, el) {
   else if (act === 'cancel') { m.status = 'cancelled'; save(); renderCollab(chat, m, true); }
   else if (act === 'stop') stopCollabIn(chat);
   else if (act === 'copy') { navigator.clipboard.writeText(m.final || ''); toast('已复制'); }
+  else if (act === 'export') exportCollab(chat, m);
+  else if (act === 'archive') archiveFromCollab(chat, m);
+  else if (act === 'tpl') saveTemplateModal(chat, m);
   else if (act === 'replan') {
     const v = el.closest('.collab').querySelector('.cb-sup')?.value.trim();
     if ((m.status === 'planned' || m.status === 'ask') && !v) return toast('先写上要补充的内容');

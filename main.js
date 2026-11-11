@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, net, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, net, shell, Menu, safeStorage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -48,24 +48,52 @@ function createWindow() {
 }
 
 // ---------- storage ----------
+// API keys are encrypted at rest with the OS keychain (DPAPI on Windows) when available.
+const fakeCrypto = process.env.CLAWCHAT_TEST_CRYPTO === '1'; // test hook only: exercises the code path where the OS keychain is missing
+const canEncrypt = () => { if (fakeCrypto) return true; try { return safeStorage.isEncryptionAvailable(); } catch { return false; } };
+const encKey = (t) => (fakeCrypto ? Buffer.from('T:' + t) : safeStorage.encryptString(t)).toString('base64');
+const decKey = (b64) => { const b = Buffer.from(b64, 'base64'); return fakeCrypto ? b.toString().slice(2) : safeStorage.decryptString(b); };
 ipcMain.handle('store:load', () => {
-  try {
-    return JSON.parse(fs.readFileSync(dataFile(), 'utf8'));
-  } catch {
-    return null;
+  let data;
+  try { data = JSON.parse(fs.readFileSync(dataFile(), 'utf8')); } catch { return null; }
+  for (const p of data.providers || []) {
+    if (p.apiKeyEnc) {
+      try { p.apiKey = decKey(p.apiKeyEnc); }
+      catch { p.apiKey = ''; p.keyLost = true; }
+      delete p.apiKeyEnc;
+    }
   }
+  return data;
 });
+ipcMain.handle('store:encrypted', () => canEncrypt());
 
 ipcMain.handle('store:save', (_e, data) => {
   const file = dataFile();
   const tmp = file + '.tmp';
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (canEncrypt()) {
+    data = { ...data, providers: (data.providers || []).map((p) => {
+      if (!p.apiKey) return p;
+      const { apiKey, keyLost, ...rest } = p;
+      try {
+        const enc = encKey(apiKey);
+        if (decKey(enc) !== apiKey) return p; // never store a key we could not read back
+        return { ...rest, apiKeyEnc: enc };
+      } catch { return p; }
+    }) };
+  }
   fs.writeFileSync(tmp, JSON.stringify(data, null, 1), 'utf8');
   fs.renameSync(tmp, file);
   return true;
 });
 
 ipcMain.handle('store:path', () => dataFile());
+ipcMain.handle('file:saveText', async (e, { name, text }) => {
+  const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: name, filters: [{ name: 'Markdown', extensions: ['md'] }, { name: '文本', extensions: ['txt'] }] });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, text, 'utf8');
+  return r.filePath;
+});
 ipcMain.handle('open:data-folder', () => shell.openPath(path.dirname(dataFile())));
 
 // ---------- LLM (OpenAI-compatible) ----------
@@ -195,7 +223,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
   controllers.set(reqId, { abort: () => { child._aborted = true; killTree(child); } });
   send('llm:thinking', { reqId });
 
-  let buf = '', errTail = '', lastErr = '', finalText = '', streamed = '';
+  let buf = '', errTail = '', lastErr = '', finalText = '', streamed = '', usage;
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (d) => {
     buf += d;
@@ -210,6 +238,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
         if (j.type === 'stream_event' && ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
           streamed += ev.delta.text; send('llm:chunk', { reqId, delta: ev.delta.text });
         } else if (j.type === 'result') {
+          if (j.usage) usage = { in: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0) + (j.usage.cache_creation_input_tokens || 0), out: j.usage.output_tokens || 0 };
           if (j.is_error) lastErr = j.result || j.subtype || 'Claude Code 出错';
           else finalText = j.result || finalText;
         }
@@ -218,7 +247,8 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
           const t = j.item.text || '';
           finalText = t;
           if (t) { const delta = streamed ? '\n\n' + t : t; streamed += delta; send('llm:chunk', { reqId, delta }); }
-        } else if (j.type === 'turn.failed') lastErr = j.error?.message || 'Codex 出错';
+        } else if (j.type === 'turn.completed' && j.usage) usage = { in: j.usage.input_tokens || 0, out: j.usage.output_tokens || 0 };
+        else if (j.type === 'turn.failed') lastErr = j.error?.message || 'Codex 出错';
         else if (j.type === 'error' && !/Reconnecting/i.test(j.message || '')) lastErr = j.message;
       }
     }
@@ -237,7 +267,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
       if (/log ?in|auth|unauthorized|401/i.test(msg)) msg += '\n（可能还没登录：在命令行运行一次 ' + cmd + (kind === 'claude' ? '' : ' login') + ' ）';
       return send('llm:done', { reqId, error: msg.slice(0, 600) });
     }
-    send('llm:done', { reqId, replace: finalText && streamed !== finalText ? finalText : undefined });
+    send('llm:done', { reqId, usage, replace: finalText && streamed !== finalText ? finalText : undefined });
   });
   child.stdin.on('error', () => {});
   child.stdin.end(prompt, 'utf8');
@@ -368,30 +398,42 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
   controllers.set(reqId, ctrl);
   try {
     const wantVision = attach.hasImages(messages);
+    let askUsage = true;
     const post = (msgs) => {
       const body = { model, messages: msgs, stream: true };
+      if (askUsage) body.stream_options = { include_usage: true };
       if (typeof temperature === 'number') body.temperature = temperature;
       return net.fetch(endpoint(baseUrl, '/chat/completions'), {
         method: 'POST', headers: headers(apiKey), body: JSON.stringify(body), signal: ctrl.signal,
       });
     };
-    let res = await post(attach.resolveMessages(messages, wantVision ? 'vision' : 'noimg').messages);
+    const mode = wantVision ? 'vision' : 'noimg';
+    let res = await post(attach.resolveMessages(messages, mode).messages);
+    if (!res.ok && res.status === 400) {
+      // some OpenAI-compatible servers reject stream_options: retry once without it
+      askUsage = false;
+      const retry = await post(attach.resolveMessages(messages, mode).messages);
+      if (retry.ok || !wantVision) { if (!retry.ok) throw new Error(await readError(res)); res = retry; }
+      else res = retry;
+    }
     if (!res.ok && wantVision && res.status >= 400 && res.status < 500) {
       // model probably can't see images: retry with text placeholders
       const errText = await readError(res);
       res = await post(attach.resolveMessages(messages, 'noimg').messages);
-      if (res.ok) send('llm:chunk', { reqId, delta: '' });
-      else throw new Error(errText);
+      if (!res.ok) throw new Error(errText);
     }
     if (!res.ok) throw new Error(await readError(res));
+    let usage;
+    const takeUsage = (u) => { if (u && (u.prompt_tokens || u.completion_tokens)) usage = { in: u.prompt_tokens || 0, out: u.completion_tokens || 0 }; };
 
     const ctype = res.headers.get('content-type') || '';
     if (!ctype.includes('event-stream')) {
       // server ignored stream:true
       const j = await res.json();
       const text = j.choices?.[0]?.message?.content || '';
+      takeUsage(j.usage);
       send('llm:chunk', { reqId, delta: text });
-      send('llm:done', { reqId });
+      send('llm:done', { reqId, usage });
       return;
     }
 
@@ -413,6 +455,7 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
         try {
           const j = JSON.parse(data);
           if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+          takeUsage(j.usage);
           const d = j.choices?.[0]?.delta || {};
           const rc = d.reasoning_content || d.reasoning;
           if (rc && !thinking) {
@@ -427,7 +470,7 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
         }
       }
     }
-    send('llm:done', { reqId });
+    send('llm:done', { reqId, usage });
   } catch (err) {
     if (err.name === 'AbortError') send('llm:done', { reqId, aborted: true });
     else send('llm:done', { reqId, error: String(err.message || err) });

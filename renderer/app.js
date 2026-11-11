@@ -213,7 +213,7 @@ function buildMessages(chat, agent) {
   const others = members.filter((m) => m.id !== agent.id);
   let sys = `你的名字是「${agent.name}」。\n${agent.persona || ''}`;
   if (agent.memory?.trim()) sys += `\n\n【你对用户的长期记忆】\n${agent.memory.trim()}`;
-  sys += `\n\n当前时间：${new Date().toLocaleString('zh-CN')}。用户的称呼是「${S.userName}」。`;
+  sys += `\n\n当前时间：${new Date().toLocaleString('zh-CN')}。用户的称呼是「${S.userName}」。` + archiveBlock(chat);
   if (chat.type === 'group') {
     sys += `\n\n你正在一个叫「${chatTitle(chat)}」的聊天群里。群成员有：用户「${S.userName}」` +
       (others.length ? '，以及其他 AI 成员：' + others.map((o) => `「${o.name}」（${(o.persona || '').slice(0, 40)}）`).join('、') : '') +
@@ -285,6 +285,7 @@ function workPrompt(chat, a, task) {
   const ctx = chat.messages.filter((m) => m.text && !m.error && m.type !== 'confirm' && m.type !== 'note' && !(m.from === 'user' && (WORK_RE.test(m.text) || /^(确认|确定|开始|执行|ok|yes|取消)$/i.test(m.text.trim())))).slice(-12)
     .map((m) => `【${name(m)}】: ${m.text.slice(0, 1500)}${attNote(m)}`).join('\n\n');
   return `你是「${a.name}」。${a.persona || ''}\n${a.memory?.trim() ? '\n【关于用户的记忆】\n' + a.memory.trim() + '\n' : ''}
+${archiveBlock(chat)}
 你在 ClawChat 里收到一个需要实际执行的任务。
 工作文件夹：${a.work.dir}
 任务：${task}
@@ -378,10 +379,11 @@ async function agentReply(chat, agent) {
   }
   renderMessagesIfActive(chat);
   const run = running.get(chat.id);
+  const reqMsgs = llm.kind === 'muse' ? museMessages(chat, agent, msg) : buildMessages(chat, agent);
   const { reqId, promise } = window.claw.stream(
     llm.kind === 'muse'
-      ? { ...llm, threadUrl: agent.museThreads?.[chat.id], messages: museMessages(chat, agent, msg) }
-      : { ...llm, temperature: agent.temperature, messages: buildMessages(chat, agent) },
+      ? { ...llm, threadUrl: agent.museThreads?.[chat.id], messages: reqMsgs }
+      : { ...llm, temperature: agent.temperature, messages: reqMsgs },
     {
       onThinking: () => { msg.thinking = true; updateBubble(chat, msg); },
       onReasoning: (d) => { if ((msg.reasoning || '').length < 30000) msg.reasoning = (msg.reasoning || '') + d; },
@@ -397,6 +399,7 @@ async function agentReply(chat, agent) {
   if (res.error) msg.error = res.error;
   else if (!msg.text) { if (res.aborted) chat.messages.splice(chat.messages.indexOf(msg), 1); else msg.error = '（空回复）'; }
   msg.model = llm.model;
+  if (!res.error && msg.text) msg.usage = mkUsage(agent, res.usage, JSON.stringify(reqMsgs, (k, v) => (k === 'thumb' ? undefined : v)), msg.text + (msg.reasoning || ''));
   const prop = (msg.text || '').split('\n').find((l) => WORK_RE.test(l));
   if (prop && chat.messages.filter((x) => x.type === 'confirm' && x.status === 'pending').length < 3) proposeWork(chat, prop, agent.id);
   chat.updated = Date.now();
@@ -629,7 +632,7 @@ function msgHTML(chat, m) {
     ${chat.type === 'group' ? `<div class="who">${esc(a?.name || '已删除的联系人')}</div>` : ''}
     ${m.reasoning && !m.pending ? `<details class="think"><summary>💭 思考过程</summary><div class="think-body">${esc(m.reasoning)}</div></details>` : ''}
     ${body}
-    ${m.pending ? '' : `<div class="tools"><span data-act="copy">复制</span><span data-act="regen">重新生成</span><span data-act="del">删除</span>${m.model ? `<span style="cursor:default">${esc(m.model)}</span>` : ''}</div>`}
+    ${m.pending ? '' : `<div class="tools"><span data-act="copy">复制</span><span data-act="regen">重新生成</span><span data-act="del">删除</span>${m.model ? `<span style="cursor:default">${esc(m.model)}</span>` : ''}${fmtUsage(m.usage) ? `<span style="cursor:default">${fmtUsage(m.usage)}</span>` : ''}</div>`}
   </div></div>`;
 }
 
@@ -668,6 +671,7 @@ function renderChat(chat) {
           <option value="some" ${chat.replyMode === 'some' ? 'selected' : ''}>随机 1~2 位回复</option>
           <option value="mention" ${chat.replyMode === 'mention' ? 'selected' : ''}>只有 @ 才回复</option>
         </select>` : ''}
+      <button class="btn" id="btn-archive" title="这个聊天长期共享的背景资料，每个成员都会看到">📁 档案${chat.archive?.trim() ? ' ✓' : ''}</button>
       <button class="btn" id="btn-memory" title="让智能体从这段对话里提炼要记住的内容">🧠 记住这段</button>
       ${group ? `<button class="btn" id="btn-edit-group">群设置</button>` : `<button class="btn" id="btn-edit-agent">编辑</button>`}
     </div>
@@ -765,9 +769,11 @@ function renderSettings() {
     <div class="card"><h3>数据</h3><div class="row-actions">
       <button class="btn" id="s-open">打开数据文件夹</button>
       <button class="btn" id="s-export">导出备份</button>
-      <span class="desc" id="s-path" style="margin:0;font-size:12px"></span></div></div>
+      <span class="desc" id="s-path" style="margin:0;font-size:12px"></span></div>
+      <div class="desc" id="s-enc" style="margin:10px 0 0;font-size:12px"></div></div>
   </div>`;
   window.claw.dataPath().then((p) => { const el = $('#s-path'); if (el) el.textContent = p; });
+  window.claw.encrypted().then((ok) => { const el = $('#s-enc'); if (el) el.textContent = ok ? '🔒 API Key 已用系统加密保存，只有这台电脑上的当前账号能解开。' : '⚠ 这台电脑上系统加密不可用，API Key 以明文保存在数据文件里。'; });
 }
 
 function providerCardHTML(p) {
@@ -783,6 +789,10 @@ function providerCardHTML(p) {
     </div>
     <div class="field"><label>API Key ${preset?.keyUrl ? `· <a href="${preset.keyUrl}" target="_blank" style="color:#c4620a">去申请</a>` : ''}</label>
       <input data-pf="apiKey" type="password" value="${esc(p.apiKey)}" placeholder="sk-..."></div>
+    <div class="grid2">
+      <div class="field"><label>输入价格（元 / 百万 tokens，可不填）</label><input data-pf="priceIn" value="${esc(p.priceIn || '')}" placeholder="填了才会显示花费"></div>
+      <div class="field"><label>输出价格（元 / 百万 tokens，可不填）</label><input data-pf="priceOut" value="${esc(p.priceOut || '')}"></div>
+    </div>
     <div class="row-actions">
       <button class="btn" data-pact="test">测试连接</button>
       <button class="btn" data-pact="models">获取模型列表</button>
@@ -851,7 +861,8 @@ function newChatModal(editChat = null) {
     <div class="field"><label>选择成员</label></div>
     <div class="pick-list">${S.agents.map((a) => `<label><input type="checkbox" value="${a.id}" ${sel.has(a.id) ? 'checked' : ''}>${avatarHTML(a, 'sm')}<span>${esc(a.name)}</span></label>`).join('')}</div>
     ${editChat && editChat.type === 'group' ? `<div class="grid2"><div class="field"><label>协作时的主管（选最聪明的那个）</label><select id="m-lead">${chatMembers(editChat).map((a) => `<option value="${a.id}" ${collabLead(editChat)?.id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>不合格时最多打回重做</label><select id="m-redo">${[0, 1, 2].map((n) => `<option value="${n}" ${(editChat.collabRedo ?? 1) === n ? 'selected' : ''}>${n} 轮</option>`).join('')}</select></div></div>` : ''}
+      <div class="field"><label>不合格时最多打回重做</label><select id="m-redo">${[0, 1, 2].map((n) => `<option value="${n}" ${(editChat.collabRedo ?? 1) === n ? 'selected' : ''}>${n} 轮</option>`).join('')}</select></div></div>
+      <div class="field"><label>单次协作的用量上限（到了会自动暂停，可以选择继续）</label><select id="m-budget">${[[100000, '10 万 tokens'], [200000, '20 万 tokens'], [500000, '50 万 tokens'], [1000000, '100 万 tokens'], [3000000, '300 万 tokens'], [0, '不限']].map(([v, l]) => `<option value="${v}" ${(editChat.collabBudget ?? 500000) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
     <div class="foot">${editChat ? '<button class="btn danger" id="m-del" style="margin-right:auto">删除群</button><button class="btn" id="m-clear">清空记录</button>' : ''}
       <button class="btn" id="m-cancel">取消</button><button class="btn primary" id="m-ok">${editChat ? '保存' : '创建'}</button></div>`,
   (m, close) => {
@@ -862,7 +873,7 @@ function newChatModal(editChat = null) {
       if (!ids.length) return toast('至少选一个联系人');
       if (editChat) {
         editChat.members = ids; editChat.name = name || editChat.name;
-        const ld = $('#m-lead', m); if (ld) { editChat.leadId = ld.value; editChat.collabRedo = +$('#m-redo', m).value; }
+        const ld = $('#m-lead', m); if (ld) { editChat.leadId = ld.value; editChat.collabRedo = +$('#m-redo', m).value; editChat.collabBudget = +$('#m-budget', m).value; }
       } else if (ids.length === 1 && !name) {
         const ex = S.chats.find((c) => c.type === 'dm' && c.members[0] === ids[0]);
         if (ex) activeChatId = ex.id;
@@ -1051,7 +1062,9 @@ document.addEventListener('click', async (e) => {
     case 'btn-send': if (chat) { const ta = $('#composer-input'); const v = ta.value; ta.value = ''; chat.draft = ''; sendUser(chat, v); } break;
     case 'btn-stop': if (chat) stopChat(chat); break;
     case 'btn-continue': if (chat) continueChat(chat, 1); break;
-    case 'btn-collab': { const ta = $('#composer-input'); if (!COLLAB_RE.test(ta.value)) ta.value = '/协作 ' + ta.value.replace(/^\s*\/\S*\s*/, ''); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); break; }
+    case 'btn-archive': if (chat) archiveModal(chat); break;
+    case 'btn-collab': if (chat) { collabModal(chat); break; }
+    case 'btn-collab-old': { const ta = $('#composer-input'); if (!COLLAB_RE.test(ta.value)) ta.value = '/协作 ' + ta.value.replace(/^\s*\/\S*\s*/, ''); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); break; }
     case 'btn-memory': if (chat) summarizeMemory(chat); break;
     case 'btn-edit-group': if (chat) newChatModal(chat); break;
     case 'btn-edit-agent': if (chat) { activeAgentId = chat.members[0]; view = 'agents'; renderAll(); } break;
@@ -1167,6 +1180,8 @@ document.addEventListener('paste', (e) => {
   window.claw.work.onEvent(onWorkEvent);
   const sorted = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0));
   activeChatId = sorted[0]?.id || null;
+  S.templates = S.templates || [];
+  if (S.providers.some((p) => p.keyLost)) setTimeout(() => toast('有 API Key 解密失败（可能换了电脑或系统账号），请到「设置」里重新填写', 7000), 600);
   if (!S.providers.length) { view = 'settings'; setTimeout(() => toast('先添加一个模型服务（推荐 DeepSeek），填好 API Key 就能聊了', 5000), 400); }
   save();
   renderAll();
