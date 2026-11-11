@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('claw', {
   },
   attSave: (name, data) => ipcRenderer.invoke('att:save', { name, data }),
   attOpen: (p) => ipcRenderer.invoke('att:open', p),
+  pachat: (req) => ipcRenderer.invoke('pachat:api', req),
   museStatus: () => ipcRenderer.invoke('muse:status'),
   museLogin: () => ipcRenderer.invoke('muse:login'),
   // returns { reqId, promise }

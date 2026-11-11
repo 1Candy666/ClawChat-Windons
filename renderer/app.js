@@ -520,12 +520,14 @@ function renderAll() { renderRail(); renderList(); renderMain(); }
 
 function renderRail() {
   document.querySelectorAll('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $('#list-add').style.visibility = view === 'tasks' ? 'hidden' : 'visible';
   $('#list-add').title = view === 'agents' ? '新建联系人' : view === 'settings' ? '添加模型服务' : '新建群聊 / 私聊';
   $('#search').style.visibility = view === 'settings' ? 'hidden' : 'visible';
 }
 
 function renderList() {
   const body = $('#list-body');
+  if (view === 'tasks') return renderTaskFilters(body);
   const f = filter.trim().toLowerCase();
   if (view === 'chats') {
     const chats = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0))
@@ -564,6 +566,7 @@ function renderMain() {
     }
     renderChat(chat);
   } else if (view === 'agents') renderAgentEditor();
+  else if (view === 'tasks') renderTasksPage();
   else renderSettings();
 }
 
@@ -725,6 +728,7 @@ function renderAgentEditor() {
     <div class="card"><h3>长期记忆 <span class="badge">每次对话都会带上</span></h3>
       <div class="field"><textarea id="f-memory" rows="6" placeholder="例如：- 用户是研究生，在做 CFD 仿真&#10;也可以在聊天里点「🧠 记住这段」自动整理">${esc(a.memory)}</textarea></div></div>
     ${roleCardHTML(a)}
+    ${pachatCardHTML(a)}
     ${isWorkerAgent(a) ? workCardHTML(a) : ''}
     <div class="card"><h3>模型</h3>
       <div class="grid2"><div class="field"><label>模型服务</label><select id="f-provider">${provOpts}</select></div>
@@ -918,9 +922,12 @@ function addAgentModal(p) {
 
 // ---------------- events ----------------
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],button');
+  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],button');
   if (!t) return;
 
+  if (t.dataset.tfilter) { taskFilter = t.dataset.tfilter; renderList(); renderTasksPage(); return; }
+  if (t.dataset.tjump) { const [c, mid] = t.dataset.tjump.split('|'); jumpToTask(c, mid); return; }
+  if (t.id === 'pa-pair' || t.id === 'pa-off') { const ag = agentById(activeAgentId); if (ag) pachatCardAction(t.id, ag); return; }
   if (t.dataset.view) { view = t.dataset.view; filter = ''; $('#search').value = ''; renderAll(); return; }
   if (t.dataset.chat) { const prev = chatById(activeChatId); const ta = $('#composer-input'); if (prev && ta) prev.draft = ta.value; activeChatId = t.dataset.chat; renderList(); renderMain(); return; }
   if (t.dataset.agent) { activeAgentId = t.dataset.agent; renderList(); renderMain(); return; }
@@ -1095,7 +1102,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
-  if (t.id === 'search') { filter = t.value; renderList(); return; }
+  if (t.id === 'search') { filter = t.value; if (view === 'tasks') renderTasksPage(); else renderList(); return; }
   const agent = agentById(activeAgentId);
   if (view === 'agents' && agent) {
     if (t.id === 'f-name') { agent.name = t.value.trim() || '未命名'; renderList(); $('.page h2').textContent = agent.name; }
@@ -1179,6 +1186,7 @@ document.addEventListener('paste', (e) => {
     if (m.type === 'collab' && COLLAB_ACTIVE.includes(m.status)) { m.status = 'stopped'; (m.tasks || []).forEach((t) => { if (t.status === 'running' || t.status === 'asking') t.status = 'pending'; delete t.live; }); }
   }));
   window.claw.work.onEvent(onWorkEvent);
+  setTimeout(pachatStartAll, 1500);
   const sorted = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0));
   activeChatId = sorted[0]?.id || null;
   S.templates = S.templates || [];

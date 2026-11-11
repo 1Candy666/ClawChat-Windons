@@ -63,6 +63,12 @@ ipcMain.handle('store:load', () => {
       delete p.apiKeyEnc;
     }
   }
+  for (const a of data.agents || []) {
+    if (a.pachat?.tokenEnc) {
+      try { a.pachat.token = decKey(a.pachat.tokenEnc); } catch { a.pachat.token = ''; a.pachat.lost = true; }
+      delete a.pachat.tokenEnc;
+    }
+  }
   return data;
 });
 ipcMain.handle('store:encrypted', () => canEncrypt());
@@ -80,6 +86,14 @@ ipcMain.handle('store:save', (_e, data) => {
         if (decKey(enc) !== apiKey) return p; // never store a key we could not read back
         return { ...rest, apiKeyEnc: enc };
       } catch { return p; }
+    }), agents: (data.agents || []).map((a) => {
+      if (!a.pachat?.token) return a;
+      try {
+        const { token, ...rest } = a.pachat;
+        const enc = encKey(token);
+        if (decKey(enc) !== token) return a;
+        return { ...a, pachat: { ...rest, tokenEnc: enc } };
+      } catch { return a; }
     }) };
   }
   fs.writeFileSync(tmp, JSON.stringify(data, null, 1), 'utf8');
@@ -481,5 +495,6 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
 
 require('./work').register();
 require('./attach').register();
+require('./pachat').register();
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
