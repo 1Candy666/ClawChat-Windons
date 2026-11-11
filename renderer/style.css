@@ -184,3 +184,43 @@ select.btn { padding: 5px 8px; }
 .msg-file:hover { border-color: var(--accent); } .msg-file span { color: var(--muted); font-size: 11px; margin-left: 6px; }
 body.dropping .messages { outline: 3px dashed var(--accent); outline-offset: -10px; background: #fff8ef; }
 .att-chip .ok { color: #3a8a4a; font-size: 11px; white-space: nowrap; } .att-chip .warn { color: var(--danger); font-size: 11px; white-space: nowrap; }
+
+/* collab */
+.collab { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin: 0 0 18px; line-height: 1.6; max-width: 900px; }
+.cb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.cb-head > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; }
+.cb-who { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+.cb-head .cb-who { margin-left: 0; }
+.cb-sec { font-size: 12px; color: var(--muted); margin: 12px 0 4px; font-weight: 600; letter-spacing: .5px; }
+.cb-req { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.cb-supp { border-top: 1px dashed #f0c690; margin-top: 6px; padding-top: 6px; }
+.cb-note { background: #f6f4ef; border-radius: 8px; padding: 7px 12px; white-space: pre-wrap; font-size: 13.5px; }
+.cb-note.warn { background: #fff6e0; }
+.cb-qs { margin: 0; padding-left: 22px; }
+.cb-task { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; background: #fdfcfa; }
+.cb-task > summary { display: flex; align-items: center; gap: 10px; padding: 7px 10px; cursor: pointer; list-style: none; }
+.cb-task > summary::-webkit-details-marker { display: none; }
+.cb-task[open] > summary { border-bottom: 1px solid var(--line); }
+.cb-tt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cb-tt .cb-who { margin-left: 0; }
+.cb-live { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, monospace; }
+.cb-task.st-running, .cb-task.st-asking { border-color: #f3c48e; }
+.cb-task.st-error { border-color: #efb1a9; }
+.badge.b-done { background: #dff3e2; color: #2c7a3a; } .badge.b-error { background: #fdecea; color: var(--danger); } .badge.b-pending { background: #eee; color: var(--muted); }
+.cb-body { padding: 4px 12px 12px; user-select: text; }
+.cb-brief { border-collapse: collapse; width: 100%; font-size: 13px; }
+.cb-brief th { text-align: left; vertical-align: top; white-space: nowrap; color: var(--muted); font-weight: 500; padding: 3px 12px 3px 0; width: 1%; }
+.cb-brief td { padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
+.cb-qa { background: #eef4ff; border-radius: 8px; padding: 7px 12px; font-size: 13.5px; white-space: pre-wrap; }
+.cb-warn { color: #a05a00; font-size: 12.5px; margin-top: 6px; }
+.cb-out, .cb-final { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; word-break: break-word; }
+.cb-final { border-left-color: var(--accent); }
+.cb-out p, .cb-final p { margin: 0 0 8px; } .cb-out pre, .cb-final pre { background: #2a2622; color: #f3ede4; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; }
+.collab details > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.collab > details { margin-top: 10px; }
+.cb-check { margin-top: 4px; font-size: 13.5px; } .cb-check .ok { color: #2c7a3a; } .cb-check .no { color: var(--danger); } .cb-check span { color: var(--muted); margin-left: 8px; font-size: 12.5px; }
+.cb-suprow { display: flex; gap: 8px; margin-top: 10px; } .cb-sup { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; outline: none; } .cb-sup:focus { border-color: var(--accent); }
+.collab .row-actions { margin-top: 12px; }
+.think { margin: 0 4px 4px; } .think summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.think-body { background: #f3f1ec; border-radius: 8px; padding: 8px 12px; margin-top: 4px; font-size: 12.5px; color: #6b655c; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+.collab .tools { font-size: 12px; color: var(--muted); margin-top: 6px; gap: 10px; } .collab .tools span { cursor: pointer; } .collab .tools span:hover { color: var(--accent); }

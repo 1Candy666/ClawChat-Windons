@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const listeners = { chunk: new Map(), done: new Map(), thinking: new Map() };
+const listeners = { chunk: new Map(), done: new Map(), thinking: new Map(), reasoning: new Map() };
+ipcRenderer.on('llm:reasoning', (_e, p) => listeners.reasoning.get(p.reqId)?.(p.delta));
 ipcRenderer.on('llm:chunk', (_e, p) => listeners.chunk.get(p.reqId)?.(p.delta));
 ipcRenderer.on('llm:thinking', (_e, p) => listeners.thinking.get(p.reqId)?.());
 ipcRenderer.on('llm:done', (_e, p) => {
@@ -8,6 +9,7 @@ ipcRenderer.on('llm:done', (_e, p) => {
   listeners.chunk.delete(p.reqId);
   listeners.done.delete(p.reqId);
   listeners.thinking.delete(p.reqId);
+  listeners.reasoning.delete(p.reqId);
   fn?.(p);
 });
 
@@ -34,11 +36,12 @@ contextBridge.exposeInMainWorld('claw', {
   museStatus: () => ipcRenderer.invoke('muse:status'),
   museLogin: () => ipcRenderer.invoke('muse:login'),
   // returns { reqId, promise }
-  stream(cfg, { onChunk, onThinking }) {
+  stream(cfg, { onChunk, onThinking, onReasoning }) {
     const reqId = 'r' + Date.now() + '_' + seq++;
     const promise = new Promise((resolve) => {
       listeners.chunk.set(reqId, onChunk || (() => {}));
       listeners.thinking.set(reqId, onThinking || (() => {}));
+      if (onReasoning) listeners.reasoning.set(reqId, onReasoning);
       listeners.done.set(reqId, resolve);
     });
     ipcRenderer.send('llm:stream', { ...cfg, reqId });

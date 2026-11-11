@@ -320,6 +320,7 @@ function startWork(chat, confirmMsg) {
 }
 
 function onWorkEvent(ev) {
+  const cj = collabJobs.get(ev.jobId); if (cj) return cj(ev);
   const ref = workJobs.get(ev.jobId); if (!ref) return;
   const chat = chatById(ref.chatId); const m = chat?.messages.find((x) => x.id === ref.msgId); if (!m) return;
   if (ev.type === 'log') { m.log.push(ev.entry); if (m.log.length > 400) m.log.splice(0, m.log.length - 400); }
@@ -383,6 +384,7 @@ async function agentReply(chat, agent) {
       : { ...llm, temperature: agent.temperature, messages: buildMessages(chat, agent) },
     {
       onThinking: () => { msg.thinking = true; updateBubble(chat, msg); },
+      onReasoning: (d) => { if ((msg.reasoning || '').length < 30000) msg.reasoning = (msg.reasoning || '') + d; },
       onChunk: (d) => { msg.thinking = false; msg.text += d; updateBubble(chat, msg); },
     }
   );
@@ -444,12 +446,16 @@ function sendUser(chat, text) {
   chat.updated = Date.now();
   const pending = [...chat.messages].reverse().find((m) => m.type === 'confirm' && m.status === 'pending');
   if (/^(\/停止|\/stop)$/i.test(text)) {
-    const n = stopWorkIn(chat); stopChat(chat);
+    const n = stopWorkIn(chat) + stopCollabIn(chat); stopChat(chat);
     chat.messages.push({ id: uid('m'), type: 'note', from: 'system', text: n ? `已停止 ${n} 个正在执行的任务` : '没有正在执行的任务', ts: Date.now() });
     save(); renderList(); renderMessagesIfActive(chat); return;
   }
   if (pending && /^(确认|确定|开始|执行|ok|yes)$/i.test(text)) { startWork(chat, pending); return; }
   if (pending && /^(取消|算了|不要|no)$/i.test(text)) { pending.status = 'cancelled'; save(); renderMessagesIfActive(chat); return; }
+  const pc = [...chat.messages].reverse().find((m) => m.type === 'collab' && (m.status === 'planned' || m.status === 'ask'));
+  if (!pending && pc && /^(确认|确定|开始|执行|ok|yes)$/i.test(text)) { collabExecute(chat, pc); return; }
+  if (!pending && pc && /^(取消|算了|不要|no)$/i.test(text)) { pc.status = 'cancelled'; save(); renderMessagesIfActive(chat); return; }
+  if (COLLAB_RE.test(text)) { collabStart(chat, text, um.attachments); save(); renderList(); renderMessagesIfActive(chat); return; }
   if (WORK_RE.test(text)) { proposeWork(chat, text, 'user'); save(); renderList(); renderMessagesIfActive(chat); return; }
   save();
   renderList(); renderMessagesIfActive(chat);
@@ -607,6 +613,7 @@ function workHTML(chat, m) {
 function msgHTML(chat, m) {
   if (m.type === 'confirm') return confirmHTML(chat, m);
   if (m.type === 'work') return workHTML(chat, m);
+  if (m.type === 'collab') return collabHTML(chat, m);
   if (m.type === 'note') return `<div class="sys" data-mid="${m.id}">${esc(m.text)}</div>`;
   const members = chatMembers(chat);
   if (m.from === 'user') {
@@ -620,6 +627,7 @@ function msgHTML(chat, m) {
     : `<div class="bubble ${m.pending ? 'typing' : ''}" id="b-${m.id}">${m.thinking && !m.text ? '<span style="color:var(--muted)">思考中…</span>' : md(m.text, members)}</div>`;
   return `<div class="msg" data-mid="${m.id}">${avatarHTML(a)}<div class="body">
     ${chat.type === 'group' ? `<div class="who">${esc(a?.name || '已删除的联系人')}</div>` : ''}
+    ${m.reasoning && !m.pending ? `<details class="think"><summary>💭 思考过程</summary><div class="think-body">${esc(m.reasoning)}</div></details>` : ''}
     ${body}
     ${m.pending ? '' : `<div class="tools"><span data-act="copy">复制</span><span data-act="regen">重新生成</span><span data-act="del">删除</span>${m.model ? `<span style="cursor:default">${esc(m.model)}</span>` : ''}</div>`}
   </div></div>`;
@@ -667,10 +675,11 @@ function renderChat(chat) {
     <div class="composer">
       ${group ? `<div class="mention-bar"><span class="label">@</span>${members.map((m) => `<button class="chip" data-mention="${esc(m.name)}">${isEmoji(m.avatar) && !m.img ? esc(m.avatar) + ' ' : ''}${esc(m.name)}</button>`).join('')}
         <span style="flex:1"></span>
+        ${members.length > 1 ? `<button class="btn" id="btn-collab" title="主管拆任务 → 按特长派活 → 验收汇总。当前主管：${esc(collabLead(chat)?.name || '')}（可在群设置里改）">🤝 协作</button>` : ''}
         ${isRunning ? '' : `<button class="btn" id="btn-continue" title="不用你说话，让群成员互相聊一轮">💬 让它们接着聊</button>`}</div>` : ''}
       <div id="att-bar" class="att-bar"></div>
       <textarea id="composer-input" data-chat="${chat.id}" placeholder="${group ? '说点什么…（@名字 指定谁回复）' : '输入消息…'}">${esc(prevDraft)}</textarea>
-      <div class="row"><span class="hint">Enter 发送 · Shift+Enter 换行${members.some(isWorkerAgent) ? ' · <code>/干活 任务</code> 让它动手 · <code>/停止</code>' : ''}</span>
+      <div class="row"><span class="hint">Enter 发送 · Shift+Enter 换行${members.some(isWorkerAgent) ? ' · <code>/干活 任务</code> 让它动手 · <code>/停止</code>' : ''}${group && members.length > 1 ? ' · <code>/协作 任务</code> 团队分工' : ''}</span>
         <button class="btn" id="btn-attach" title="添加文件或图片（也可以直接拖进窗口、Ctrl+V 粘贴截图）">📎</button><input type="file" id="att-file" multiple style="display:none">
         ${isRunning ? `<button class="btn danger" id="btn-stop">■ 停止</button>` : ''}
         <button class="btn primary" id="btn-send">发送</button></div>
@@ -710,6 +719,7 @@ function renderAgentEditor() {
       <div class="field"><textarea id="f-persona" rows="5">${esc(a.persona)}</textarea></div></div>
     <div class="card"><h3>长期记忆 <span class="badge">每次对话都会带上</span></h3>
       <div class="field"><textarea id="f-memory" rows="6" placeholder="例如：- 用户是研究生，在做 CFD 仿真&#10;也可以在聊天里点「🧠 记住这段」自动整理">${esc(a.memory)}</textarea></div></div>
+    ${roleCardHTML(a)}
     ${isWorkerAgent(a) ? workCardHTML(a) : ''}
     <div class="card"><h3>模型</h3>
       <div class="grid2"><div class="field"><label>模型服务</label><select id="f-provider">${provOpts}</select></div>
@@ -840,6 +850,8 @@ function newChatModal(editChat = null) {
     <div class="field"><label>群名称（只选 1 个联系人且不填名称 = 私聊）</label><input id="m-name" value="${esc(editChat?.name || '')}" placeholder="例如：论文讨论组"></div>
     <div class="field"><label>选择成员</label></div>
     <div class="pick-list">${S.agents.map((a) => `<label><input type="checkbox" value="${a.id}" ${sel.has(a.id) ? 'checked' : ''}>${avatarHTML(a, 'sm')}<span>${esc(a.name)}</span></label>`).join('')}</div>
+    ${editChat && editChat.type === 'group' ? `<div class="grid2"><div class="field"><label>协作时的主管（选最聪明的那个）</label><select id="m-lead">${chatMembers(editChat).map((a) => `<option value="${a.id}" ${collabLead(editChat)?.id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>不合格时最多打回重做</label><select id="m-redo">${[0, 1, 2].map((n) => `<option value="${n}" ${(editChat.collabRedo ?? 1) === n ? 'selected' : ''}>${n} 轮</option>`).join('')}</select></div></div>` : ''}
     <div class="foot">${editChat ? '<button class="btn danger" id="m-del" style="margin-right:auto">删除群</button><button class="btn" id="m-clear">清空记录</button>' : ''}
       <button class="btn" id="m-cancel">取消</button><button class="btn primary" id="m-ok">${editChat ? '保存' : '创建'}</button></div>`,
   (m, close) => {
@@ -850,6 +862,7 @@ function newChatModal(editChat = null) {
       if (!ids.length) return toast('至少选一个联系人');
       if (editChat) {
         editChat.members = ids; editChat.name = name || editChat.name;
+        const ld = $('#m-lead', m); if (ld) { editChat.leadId = ld.value; editChat.collabRedo = +$('#m-redo', m).value; }
       } else if (ids.length === 1 && !name) {
         const ex = S.chats.find((c) => c.type === 'dm' && c.members[0] === ids[0]);
         if (ex) activeChatId = ex.id;
@@ -893,7 +906,7 @@ function addAgentModal(p) {
 
 // ---------------- events ----------------
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],button');
+  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],button');
   if (!t) return;
 
   if (t.dataset.view) { view = t.dataset.view; filter = ''; $('#search').value = ''; renderAll(); return; }
@@ -909,6 +922,7 @@ document.addEventListener('click', async (e) => {
   }
   if (t.dataset.attopen) { window.claw.attOpen(t.dataset.attopen); return; }
   if (t.dataset.attdel !== undefined && chat) { const l = pendingAtts.get(chat.id) || []; l.splice(+t.dataset.attdel, 1); renderAttBar(chat); return; }
+  if (t.dataset.cact && chat) { const cm = chat.messages.find((x) => x.id === t.closest('[data-mid]').dataset.mid); if (cm) collabAction(chat, cm, t.dataset.cact, t); return; }
   if ((t.dataset.wact || t.dataset.wopen || t.dataset.wreveal) && chat) {
     if (t.dataset.wopen) { window.claw.work.open(t.dataset.wopen); return; }
     if (t.dataset.wreveal) { window.claw.work.reveal(t.dataset.wreveal); return; }
@@ -1037,6 +1051,7 @@ document.addEventListener('click', async (e) => {
     case 'btn-send': if (chat) { const ta = $('#composer-input'); const v = ta.value; ta.value = ''; chat.draft = ''; sendUser(chat, v); } break;
     case 'btn-stop': if (chat) stopChat(chat); break;
     case 'btn-continue': if (chat) continueChat(chat, 1); break;
+    case 'btn-collab': { const ta = $('#composer-input'); if (!COLLAB_RE.test(ta.value)) ta.value = '/协作 ' + ta.value.replace(/^\s*\/\S*\s*/, ''); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); break; }
     case 'btn-memory': if (chat) summarizeMemory(chat); break;
     case 'btn-edit-group': if (chat) newChatModal(chat); break;
     case 'btn-edit-agent': if (chat) { activeAgentId = chat.members[0]; view = 'agents'; renderAll(); } break;
@@ -1071,6 +1086,7 @@ document.addEventListener('input', (e) => {
   if (view === 'agents' && agent) {
     if (t.id === 'f-name') { agent.name = t.value.trim() || '未命名'; renderList(); $('.page h2').textContent = agent.name; }
     if (t.id === 'f-persona') agent.persona = t.value;
+    if (t.id === 'k-strengths') agent.card = { ...(agent.card || {}), strengths: t.value };
     if (t.id === 'w-dir') agent.work = { ...(agent.work || {}), dir: t.value.trim() };
     if (t.id === 'w-extra') agent.work = { ...(agent.work || {}), extraDirs: t.value.split('\n').map((x) => x.trim()).filter(Boolean) };
     if (t.id === 'f-avtext' && t.value.trim()) { agent.avatar = t.value.trim(); agent.img = ''; if (!DARK_COLORS.includes(agent.color)) agent.fg = '#1f1d1a'; renderList(); const big = $('.page .av.lg'); if (big) big.outerHTML = avatarHTML(agent, 'lg'); }
@@ -1106,6 +1122,7 @@ document.addEventListener('change', (e) => {
   }
   if (t.tagName === 'SELECT' && t.dataset.pf) { providerById(t.closest('[data-pcard]').dataset.pcard)[t.dataset.pf] = t.value; save(); return; }
   if (t.id === 'reply-mode') { const c = chatById(activeChatId); c.replyMode = t.value; save(); }
+  if (['k-role', 'k-speed', 'k-cost'].includes(t.id)) { const ag = agentById(activeAgentId); ag.card = { ...(ag.card || {}), [t.id.slice(2)]: t.value }; save(); return; }
   if (['w-enabled', 'w-comsol', 'w-network', 'w-level', 'w-effort'].includes(t.id)) {
     const ag = agentById(activeAgentId); ag.work = ag.work || {};
     if (t.id === 'w-enabled') ag.work.enabled = t.checked;
@@ -1145,6 +1162,7 @@ document.addEventListener('paste', (e) => {
   S.chats.forEach((c) => c.messages.forEach((m) => {
     if (m.pending) { m.pending = false; if (!m.text) m.error = '（被中断）'; }
     if (m.type === 'work' && m.status === 'running') { m.status = 'stopped'; m.errorText = '程序关闭时任务被中断'; }
+    if (m.type === 'collab' && COLLAB_ACTIVE.includes(m.status)) { m.status = 'stopped'; (m.tasks || []).forEach((t) => { if (t.status === 'running' || t.status === 'asking') t.status = 'pending'; delete t.live; }); }
   }));
   window.claw.work.onEvent(onWorkEvent);
   const sorted = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0));

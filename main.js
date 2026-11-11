@@ -414,10 +414,12 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
           const j = JSON.parse(data);
           if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
           const d = j.choices?.[0]?.delta || {};
-          if (d.reasoning_content && !thinking) {
+          const rc = d.reasoning_content || d.reasoning;
+          if (rc && !thinking) {
             thinking = true;
             send('llm:thinking', { reqId });
           }
+          if (typeof rc === 'string' && rc) send('llm:reasoning', { reqId, delta: rc });
           if (d.content) send('llm:chunk', { reqId, delta: d.content });
         } catch (err) {
           if (err instanceof SyntaxError) continue;
