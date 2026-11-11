@@ -458,6 +458,7 @@ function sendUser(chat, text) {
   const pc = [...chat.messages].reverse().find((m) => m.type === 'collab' && (m.status === 'planned' || m.status === 'ask'));
   if (!pending && pc && /^(确认|确定|开始|执行|ok|yes)$/i.test(text)) { collabExecute(chat, pc); return; }
   if (!pending && pc && /^(取消|算了|不要|no)$/i.test(text)) { pc.status = 'cancelled'; save(); renderMessagesIfActive(chat); return; }
+  if (VERIFY_RE.test(text)) { verifyStart(chat, text, um.attachments); save(); renderList(); renderMessagesIfActive(chat); return; }
   if (COLLAB_RE.test(text)) { collabStart(chat, text, um.attachments); save(); renderList(); renderMessagesIfActive(chat); return; }
   if (WORK_RE.test(text)) { proposeWork(chat, text, 'user'); save(); renderList(); renderMessagesIfActive(chat); return; }
   save();
@@ -683,7 +684,7 @@ function renderChat(chat) {
         ${isRunning ? '' : `<button class="btn" id="btn-continue" title="不用你说话，让群成员互相聊一轮">💬 让它们接着聊</button>`}</div>` : ''}
       <div id="att-bar" class="att-bar"></div>
       <textarea id="composer-input" data-chat="${chat.id}" placeholder="${group ? '说点什么…（@名字 指定谁回复）' : '输入消息…'}">${esc(prevDraft)}</textarea>
-      <div class="row"><span class="hint">Enter 发送 · Shift+Enter 换行${members.some(isWorkerAgent) ? ' · <code>/干活 任务</code> 让它动手 · <code>/停止</code>' : ''}${group && members.length > 1 ? ' · <code>/协作 任务</code> 团队分工' : ''}</span>
+      <div class="row"><span class="hint">Enter 发送 · Shift+Enter 换行${members.some(isWorkerAgent) ? ' · <code>/干活 任务</code> 让它动手 · <code>/停止</code>' : ''}${group && members.length > 1 ? ' · <code>/协作 任务</code> 分工 · <code>/核对 问题</code> 互相核对' : ''}</span>
         <button class="btn" id="btn-attach" title="添加文件或图片（也可以直接拖进窗口、Ctrl+V 粘贴截图）">📎</button><input type="file" id="att-file" multiple style="display:none">
         ${isRunning ? `<button class="btn danger" id="btn-stop">■ 停止</button>` : ''}
         <button class="btn primary" id="btn-send">发送</button></div>

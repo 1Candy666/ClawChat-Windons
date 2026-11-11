@@ -441,13 +441,13 @@ function taskHTML(chat, m, t, open) {
       ${tail ? `<span class="cb-live">${esc(tail)}</span>` : ''}</span><span class="badge b-${t.status}">${st}</span></summary>
     <div class="cb-body">
       ${t.warn ? `<div class="cb-warn">⚠ ${esc(t.warn)}</div>` : ''}
-      <div class="cb-sec">任务单</div><table class="cb-brief">${brief.map((r) => `<tr><th>${r[0]}</th><td>${esc(r[1])}</td></tr>`).join('')}</table>
+      ${brief.length ? '<div class="cb-sec">任务单</div>' : ''}<table class="cb-brief">${brief.map((r) => `<tr><th>${r[0]}</th><td>${esc(r[1])}</td></tr>`).join('')}</table>
       ${t.question ? `<div class="cb-sec">开工前的反问</div><div class="cb-qa"><b>${esc(a?.name || '')}：</b>${esc(t.question)}<br><b>主管：</b>${t.answer ? esc(t.answer) : '回答中…'}</div>` : ''}
       ${t.feedback ? `<div class="cb-sec">主管的打回意见</div><div class="cb-qa">${esc(t.feedback)}</div>` : ''}
       ${t.understanding ? `<div class="cb-sec">它的理解</div><div class="cb-note">${esc(t.understanding)}</div>` : ''}
       ${t.assumptions && t.assumptions !== '无' ? `<div class="cb-sec">假设与不确定</div><div class="cb-note warn">${esc(t.assumptions)}</div>` : ''}
       ${t.status === 'error' ? `<div class="bubble err">${esc(t.error)}</div>` : ''}
-      ${t.output ? `<div class="cb-sec">完整交付${t.model ? ` <span class="cb-who">${esc(t.model)}</span>` : ''}</div><div class="cb-out">${md(t.output)}</div>` : t.live ? `<div class="cb-sec">正在写…</div><div class="cb-out">${md(t.live)}</div>` : ''}
+      ${t.output ? `<div class="cb-sec">${t.kind ? '内容' : '完整交付'}${t.model ? ` <span class="cb-who">${esc(t.model)}</span>` : ''}</div><div class="cb-out">${md(t.output)}</div>` : t.live ? `<div class="cb-sec">正在写…</div><div class="cb-out">${md(t.live)}</div>` : ''}
       ${imgs.length ? `<div class="wc-imgs">${imgs.map((f) => `<img src="${f.img}" title="${esc(f.rel)}" data-wopen="${esc(f.path)}">`).join('')}</div>` : ''}
       ${files.length ? `<div class="wc-files">${files.map((f) => `<div><span class="fname" data-wopen="${esc(f.path)}">📄 ${esc(f.rel || f.path)}</span><span class="link" data-wreveal="${esc(f.path)}">在文件夹中显示</span></div>`).join('')}</div>` : ''}
       ${t.log?.length ? `<details data-key="${key}-log" ${open.has(key + '-log') ? 'open' : ''}><summary>执行过程（${t.log.length} 条）</summary><div class="wc-log">${t.log.map((e) => `<div class="l-${e.kind}">${esc(e.text)}${e.detail ? `<pre>${esc(e.detail)}</pre>` : ''}</div>`).join('')}</div></details>` : ''}
@@ -466,24 +466,25 @@ function collabHTML(chat, m, open = new Set()) {
   const supBox = (ph, label) => `<div class="cb-suprow"><input class="cb-sup" placeholder="${ph}"><button class="btn" data-cact="replan">${label}</button></div>`;
   if (m.status === 'planned') foot = `<div class="row-actions"><button class="btn primary" data-cact="go">✅ 按这个计划开始</button><button class="btn" data-cact="cancel">取消</button><span class="desc" style="margin:0;font-size:12px">也可以直接回复「确认」或「取消」${execN ? ` · 其中 ${execN} 个任务会在你电脑的工作文件夹里实际执行` : ''}</span></div>${supBox('主管理解得不对？在这里补充说明', '补充并重新规划')}`;
   else if (m.status === 'ask') foot = `${supBox('在这里回答主管的问题', '回答并重新规划')}<div class="row-actions" style="margin-top:8px"><button class="btn" data-cact="go">不回答，按现在的计划开始</button><button class="btn" data-cact="cancel">取消</button></div>`;
-  else if (m.status === 'error' || m.status === 'stopped') foot = `<div class="row-actions">${tasks.length ? '<button class="btn primary" data-cact="go">继续执行（已完成的任务不重做）</button>' : ''}<button class="btn" data-cact="replan">重新规划</button></div>`;
+  else if (m.status === 'error' || m.status === 'stopped') foot = `<div class="row-actions">${tasks.length ? '<button class="btn primary" data-cact="go">继续执行（已完成的不重做）</button>' : ''}<button class="btn" data-cact="replan">${m.mode === 'verify' ? '全部重来' : '重新规划'}</button></div>`;
   return `<div class="collab" data-mid="${m.id}">
-    <div class="cb-head">${avatarHTML(lead, 'sm')}<span><b>🤝 协作任务</b><span class="cb-who">主管：${esc(lead?.name || '?')}${tasks.length ? ` · ${doneN}/${tasks.length} 个任务已交付` : ''}${m.secs ? ` · ${m.secs} 秒` : ''}${fmtUsage(m.usage) ? ' · ' + fmtUsage(m.usage) : ''}</span></span>
-      <span class="badge">${st}</span>${active ? '<button class="btn danger" data-cact="stop" style="padding:2px 10px">停止</button>' : ''}</div>
+    <div class="cb-head">${avatarHTML(lead, 'sm')}<span><b>${m.mode === 'verify' ? '🔍 互相核对' : '🤝 协作任务'}</b><span class="cb-who">${m.mode === 'verify' ? '核对人' : '主管'}：${esc(lead?.name || '?')}${tasks.length ? ` · ${doneN}/${tasks.length} ${m.mode === 'verify' ? '步完成' : '个任务已交付'}` : ''}${m.secs ? ` · ${m.secs} 秒` : ''}${fmtUsage(m.usage) ? ' · ' + fmtUsage(m.usage) : ''}</span></span>
+      <span class="badge">${m.mode === 'verify' && m.status === 'running' ? '⏳ ' + (m.phase || '进行中') : m.mode === 'verify' && m.status === 'writing' ? '✍️ 核对人给结论中' : st}</span>${active ? '<button class="btn danger" data-cact="stop" style="padding:2px 10px">停止</button>' : ''}</div>
     <div class="cb-sec">你的原话</div><div class="cb-req">${esc(m.request)}${m.attachments?.length ? `<div class="cb-who" style="margin:4px 0 0">📎 ${esc(m.attachments.map((a) => a.name).join('、'))}</div>` : ''}${(m.supplements || []).map((x) => `<div class="cb-supp">补充：${esc(x)}</div>`).join('')}</div>
     ${m.understanding ? `<div class="cb-sec">主管的理解</div><div class="cb-note">${esc(m.understanding)}</div>` : ''}
     ${m.reasoning ? `<details data-key="lead-think" ${open.has('lead-think') ? 'open' : ''}><summary>💭 主管的思考过程</summary><div class="think-body">${esc(m.reasoning)}</div></details>` : ''}
     ${m.questions?.length && m.status === 'ask' ? `<div class="cb-sec">主管想先问你</div><ol class="cb-qs">${m.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>` : ''}
-    ${tasks.length ? `<div class="cb-sec">任务板</div>${tasks.map((t) => taskHTML(chat, m, t, open)).join('')}` : ''}
+    ${tasks.length ? `<div class="cb-sec">${m.mode === 'verify' ? '各成员的回答和交叉检查' : '任务板'}</div>${tasks.map((t) => taskHTML(chat, m, t, open)).join('')}` : ''}
     ${m.checklist?.length ? `<details data-key="check" ${open.has('check') || m.checklist.some((c) => !c.met) ? 'open' : ''}><summary>对照原话验收（${m.checklist.filter((c) => c.met).length}/${m.checklist.length} 条满足）</summary><div class="cb-check">${m.checklist.map((c) => `<div class="${c.met ? 'ok' : 'no'}">${c.met ? '✓' : '✗'} ${esc(c.requirement)}${c.note ? `<span>${esc(c.note)}</span>` : ''}</div>`).join('')}</div></details>` : ''}
     ${m.errorText ? `<div class="bubble err" style="margin-top:8px">${esc(m.errorText)}</div>` : ''}
-    ${m.final ? `<div class="cb-sec">最终结果</div><div class="cb-final">${md(m.final, chatMembers(chat))}</div>${m.status === 'done' ? '<div class="tools" style="display:flex"><span data-cact="copy">复制结果</span><span data-cact="export">导出为文件</span><span data-cact="archive">把结论记入项目档案</span><span data-cact="tpl">把这次分工存为模板</span></div>' : ''}` : ''}
+    ${m.final ? `<div class="cb-sec">最终结果</div><div class="cb-final">${md(m.final, chatMembers(chat))}</div>${m.status === 'done' ? '<div class="tools" style="display:flex"><span data-cact="copy">复制结果</span><span data-cact="export">导出为文件</span><span data-cact="archive">把结论记入项目档案</span>' + (m.mode === 'verify' ? '' : '<span data-cact="tpl">把这次分工存为模板</span>') + '</div>' : ''}` : ''}
     ${foot}
   </div>`;
 }
 
 function collabAction(chat, m, act, el) {
-  if (act === 'go') { if (['planned', 'ask', 'error', 'stopped'].includes(m.status) && m.tasks.length) collabExecute(chat, m); }
+  if (m.mode === 'verify' && (act === 'go' || act === 'replan')) { if (act === 'replan') m.tasks = []; if (['error', 'stopped'].includes(m.status)) verifyExecute(chat, m); }
+  else if (act === 'go') { if (['planned', 'ask', 'error', 'stopped'].includes(m.status) && m.tasks.length) collabExecute(chat, m); }
   else if (act === 'cancel') { m.status = 'cancelled'; save(); renderCollab(chat, m, true); }
   else if (act === 'stop') stopCollabIn(chat);
   else if (act === 'copy') { navigator.clipboard.writeText(m.final || ''); toast('已复制'); }
