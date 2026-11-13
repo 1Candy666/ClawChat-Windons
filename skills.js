@@ -154,6 +154,7 @@ function seedBuiltins() {
     const name = safeName(e.name), src = path.join(BUILTIN, e.name), dst = path.join(root(), name);
     if (meta.removed.includes(name)) continue;
     const hash = dirHash(src);
+    if (fs.existsSync(dst) && !meta.seeded[name] && dirHash(dst) === hash) { meta.seeded[name] = hash; continue; } // same files imported by hand earlier
     if (fs.existsSync(dst)) {
       const untouched = meta.seeded[name] && dirHash(dst) === meta.seeded[name];
       if (!untouched || meta.seeded[name] === hash) continue;
