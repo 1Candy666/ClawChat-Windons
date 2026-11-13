@@ -37,7 +37,7 @@ function comsolDirs() {
 }
 
 const IMG = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
-const SKIP = new Set(['node_modules', '.git', '__pycache__', '.venv', 'venv', 'ClawChat附件']);
+const SKIP = new Set(['node_modules', '.git', '__pycache__', '.venv', 'venv', 'ClawChat附件', '.clawchat']);
 function scanChanged(dir, since, max = 40) {
   const out = [];
   const walk = (d, depth) => {
@@ -139,9 +139,11 @@ function startJob(sender, job) {
   const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli' }[job.kind] || 'codex');
   if (job.kind === 'qoder') {
     // prompt file outside the project folder, so it never ends up among the outputs
-    job.promptFile = path.join(os.tmpdir(), `clawchat-work-${job.jobId}-prompt.md`);
+    // inside the work folder (a hidden .clawchat subfolder): qodercli won't read outside its workspace in -p mode
+    const pd = path.join(job.dir, '.clawchat', 'prompts');
+    fs.mkdirSync(pd, { recursive: true });
+    job.promptFile = path.join(pd, `${job.jobId}.md`);
     fs.writeFileSync(job.promptFile, job.prompt, 'utf8');
-    if (job.level !== 'full') job.extraDirs = [...(job.extraDirs || []), os.tmpdir()];
   }
   const args = buildArgs(job, lastFile);
   const started = Date.now();

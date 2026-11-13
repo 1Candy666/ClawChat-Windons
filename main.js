@@ -237,7 +237,8 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
   if (kind === 'qoder') {
     cmd = command || 'qodercli';
     // chat only: no tools at all; the prompt goes in through a file so long chats and Chinese text survive the Windows command line
-    const pf = path.join(os.tmpdir(), `clawchat-${reqId}-prompt.md`);
+    // inside the CLI's own working folder: qodercli refuses to read outside its workspace without asking
+    const pf = path.join(cwd, `prompt-${reqId}.md`);
     fs.writeFileSync(pf, prompt, 'utf8');
     args = ['-p', `你的完整输入在文件 ${pf} 里。先用 Read 工具完整读取它，然后只输出你的回复正文。`, '-o', 'stream-json', '--no-session-persistence', '--tools', 'Read', '--'];
     if (model) args.splice(1, 0, '-m', model);
@@ -298,6 +299,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
   child.on('close', (code) => {
     controllers.delete(reqId);
     try { const t = fs.readFileSync(lastFile, 'utf8').trim(); if (t) finalText = t; fs.unlinkSync(lastFile); } catch {}
+    if (kind === 'qoder') try { fs.unlinkSync(path.join(cwd, `prompt-${reqId}.md`)); } catch {}
     if (child._aborted) return send('llm:done', { reqId, aborted: true });
     if (!streamed && finalText) send('llm:chunk', { reqId, delta: finalText });
     if (code !== 0 && !finalText) {
