@@ -91,17 +91,22 @@ ${HANDOFF_FMT}
 
 async function inlineInputs(p, st, { forReview } = {}) {
   const i = p.stages.indexOf(st);
-  const stages = forReview ? p.stages.slice(0, i + 1) : p.stages.slice(0, i);
+  // this stage's own folder first (when reviewing), then upstream folders newest first, so the budget
+  // never runs out before the thing actually under review. Upstream scripts are listed but not pasted.
+  const stages = (forReview ? p.stages.slice(0, i + 1) : p.stages.slice(0, i)).reverse();
+  const TEXT = /\.(md|txt|csv|tsv|json|py|m|r|jl|svg|log)$/i, DATA = /\.(md|txt|csv|tsv|json)$/i;
   let text = '', atts = [], budget = 90000;
   for (const s of stages) {
+    const own = s === st;
     const files = await window.claw.proj.files(p.dir, s.folder);
-    text += `\n\n################ 环节「${s.title}」的文件夹 ${s.folder}/ ################\n文件清单：${files.map((f) => `${f.rel}（${f.size} 字节）`).join('、') || '（空）'}`;
-    for (const f of files) {
+    text += `\n\n################ 环节「${s.title}」的文件夹 ${s.folder}/ ${own ? '（就是你要审查的这个环节）' : ''}################\n文件清单：${files.map((f) => `${f.rel}（${f.size} 字节）`).join('、') || '（空）'}`;
+    const rank = (f) => (/交接\.md$/.test(f.rel) ? 0 : f.rel === st.output ? 1 : DATA.test(f.rel) ? 2 : 3);
+    for (const f of [...files].sort((a, b) => rank(a) - rank(b))) {
       if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(f.rel)) { if (atts.length < 8) atts.push({ name: f.rel, path: f.path, size: f.size, kind: 'image' }); continue; }
-      if (!/\.(md|txt|csv|tsv|json|py|m|r|jl|svg|log)$/i.test(f.rel) || f.rel === '任务.md' && s !== st) continue;
+      if (!(own ? TEXT : DATA).test(f.rel) || f.rel === '任务.md' && !own) continue;
       if (/\.svg$/i.test(f.rel) && f.size > 40000) { text += `\n\n[${f.rel} 是 ${f.size} 字节的矢量图，太大没有贴出，看对应的 png 预览]`; continue; }
-      if (budget <= 0) { text += `\n\n[${f.rel} 没有贴出来：内容太多了]`; continue; }
-      const body = await window.claw.proj.read(p.dir, s.folder + '/' + f.rel, Math.min(30000, budget));
+      if (budget <= 0) { text += `\n\n[${f.rel} 没有贴出：内容太多了]`; continue; }
+      const body = await window.claw.proj.read(p.dir, s.folder + '/' + f.rel, Math.min(own ? 40000 : 20000, budget));
       if (body == null) continue;
       budget -= body.length;
       text += `\n\n======== ${s.folder}/${f.rel} ========\n${body}`;
