@@ -15,9 +15,10 @@ function skillsCardHTML() {
   return `<div class="card"><h3>技能库</h3>
     <div class="desc" style="margin:-4px 0 10px;font-size:12px">技能是写给 AI 的工作规则（一个含 SKILL.md 的文件夹），比如"科研图表""审稿回复"。项目的每个环节可以挂上几个技能，负责人和审查人都会按它做、按它查。能动手的 AI 会拿到整个文件夹自己读；只能聊天的模型会把 SKILL.md 贴进它的指令里。</div>
     <div class="row-actions" style="margin-bottom:8px"><button class="btn" data-skact="import-zip">导入 zip 压缩包</button><button class="btn" data-skact="import-dir">导入文件夹</button><span class="desc" id="sk-status" style="margin:0;font-size:12px"></span></div>
-    ${SKILLS.length ? SKILLS.map((s) => `<div class="sk-row"><div><b>${esc(s.title)}</b>${s.title !== s.name ? ` <span class="desc">${esc(s.name)}</span>` : ''}<div class="desc">${esc(s.description.slice(0, 160))}</div></div>
+    ${SKILLS.length ? SKILLS.map((s) => `<div class="sk-row"><div><b>${esc(s.title)}</b>${s.title !== s.name ? ` <span class="desc">${esc(s.name)}</span>` : ''}${s.builtin ? ' <span class="badge" title="随 ClawChat 附带，经原作者授权收录">内置</span>' : ''}<div class="desc">${esc(s.description.slice(0, 160))}</div></div>
       <div class="sk-meta"><span class="desc">${s.files.length} 个文件</span><button class="btn" data-skact="view" data-sk="${esc(s.name)}">查看</button><button class="btn danger" data-skact="del" data-sk="${esc(s.name)}">删除</button></div></div>`).join('')
       : '<div class="desc">还没有导入技能。</div>'}
+    ${SKILLS.some((s) => s.builtin) ? '<div class="desc" style="font-size:11.5px;margin-top:8px">标「内置」的技能来自《科研辅助 Skills · 跨学科分享版》，经原作者授权随 ClawChat 收录。你改过的内置技能，软件升级时不会被覆盖；删掉的不会再自动装回。</div>' : ''}
   </div>`;
 }
 
@@ -31,7 +32,7 @@ async function skillsAction(act, t) {
     return;
   }
   const name = t.dataset.sk;
-  if (act === 'del') { if (!confirm(`删除技能「${name}」？已挂在项目环节上的会自动失效。`)) return; await window.claw.skills.remove(name); await refreshSkills(); return renderSettings(); }
+  if (act === 'del') { if (!confirm(`删除技能「${name}」？已挂在项目环节上的会自动失效。${skillByName(name)?.builtin ? '\n这是内置技能，删掉后不会再自动装回；需要时可以重新导入。' : ''}`)) return; await window.claw.skills.remove(name); await refreshSkills(); return renderSettings(); }
   if (act === 'view') {
     const text = await window.claw.skills.read(name); const s = skillByName(name);
     modal(`<h3>${esc(s?.title || name)}</h3><div class="desc" style="font-size:12px;margin:-6px 0 8px">文件：${esc((s?.files || []).join('、'))}</div><div class="cb-out" style="max-height:60vh;overflow:auto;user-select:text">${md(text || '')}</div><div class="foot"><button class="btn" id="m-cancel">关闭</button></div>`, (m, close) => { $('#m-cancel', m).onclick = close; });

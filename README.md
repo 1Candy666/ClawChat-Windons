@@ -19,6 +19,12 @@
 - 关键环节做完后停下来等你确认；你可以写意见打回
 - 你只跟主管说话：问进展、补充要求，补充的内容会写进项目说明，后面的环节都能读到
 - 项目就是一个普通文件夹，里面全是 Markdown、CSV 和图片，离开 ClawChat 也能看
+- **讲给你听**：每个环节的交接里都有一节用大白话写给你的说明（做了什么、为什么这么做、结果能说明什么和不能说明什么、哪里最可能出错）；哪里没看懂可以直接问主管
+- **理解关卡**：你点「通过」之前，主管先出两三道题，你用自己的话回答；没答到点子上就讲给你听，可以一直追问、让它"说简单点"。作答记录保存在环节文件夹的 `理解关卡.md`
+- **决策记录**：各环节交接里的「关键决策」（选了什么、理由、依据）自动汇总到项目根目录的 `决策记录.md`，审稿人或导师问起时先翻这里
+- **技能库**：技能是写给 AI 的工作规则（含 `SKILL.md` 的文件夹）。每个环节可以挂上几个技能，负责人按它做、审查人按它查；能动手的 AI 读整个文件夹，只能聊天的模型把规则贴进指令。可以导入自己的技能（文件夹或 zip）
+- **内置技能**：学术写作、学术润色、清晰直接表达、科研图表、审稿回复、图文摘要，来自《科研辅助 Skills · 跨学科分享版》，经原作者授权收录，见 [builtin-skills/授权说明.md](builtin-skills/授权说明.md)
+- 断线自动重连；审查人看不到、核实不了的内容，会交给你判断，而不是打回让负责人返工
 
 ### 聊天与其他
 
@@ -55,7 +61,7 @@
 
 | 方式 | 服务 |
 |---|---|
-| **订阅额度**（不用 API Key） | Codex（ChatGPT 订阅，调用本机 `codex`）、Claude Code（实验性，调用本机 `claude -p`） |
+| **订阅额度**（不用 API Key） | Codex（ChatGPT 订阅，调用本机 `codex`）、Claude Code（实验性，调用本机 `claude -p`）、Qoder（调用本机 `qodercli`，按 Qoder credits 计费，能看图） |
 | **API Key**（OpenAI 兼容接口） | DeepSeek、Claude、OpenAI、Gemini、Grok、Meta Muse、Mistral、Kimi、通义千问、腾讯混元、豆包、文心、智谱 GLM、MiniMax、硅基流动、OpenRouter、Ollama（本地）、任意自定义 |
 | **网页会员**（实验性） | Muse：在后台驱动你已登录的 muse.ai 网页，用「旁聊」收发消息 |
 
@@ -84,7 +90,9 @@ npm run build:win    # 打包到 dist/ClawChat-win32-x64
 ```
 main.js        主进程：窗口、本地存储、OpenAI 兼容流式调用、Codex/Claude CLI 调用、Muse 网页桥接
 pachat.js      Pachat 接口的转发（逻辑在 renderer/remote.js）
-project.js     项目文件夹的读写和 CSV 比对（流程在 renderer/project.js）
+project.js     项目文件夹的读写和 CSV 比对（流程在 renderer/project.js，讲解与理解关卡在 renderer/understand.js）
+skills.js      技能库：导入、内置技能的安装与升级（界面在 renderer/skills.js）
+builtin-skills/ 随软件附带的技能（单独授权，见其中的 授权说明.md）
 work.js        干活模式：沙箱参数、执行事件解析、产出文件扫描与图片预览
 preload.js     渲染进程可用的安全接口
 renderer/      界面（原生 HTML/CSS/JS，无框架）
@@ -102,4 +110,4 @@ renderer/      界面（原生 HTML/CSS/JS，无框架）
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE)。`builtin-skills/` 文件夹除外，它按 [builtin-skills/授权说明.md](builtin-skills/授权说明.md) 的条件使用：转载、再分发或修改须保留该说明并注明来源。

@@ -136,8 +136,43 @@ function copyInto(names, dir) {
   return out;
 }
 
+// Skills that ship with ClawChat. Seeded into the library on start; a later version replaces a
+// seeded copy only if the user never edited it, and a builtin the user deleted stays deleted.
+const BUILTIN = path.join(__dirname, 'builtin-skills');
+function dirHash(dir) {
+  const h = require('crypto').createHash('sha1');
+  for (const f of walk(dir).sort((a, b) => a.rel.localeCompare(b.rel))) h.update(f.rel + '\0').update(fs.readFileSync(path.join(dir, f.rel)));
+  return h.digest('hex');
+}
+function seedBuiltins() {
+  if (!fs.existsSync(BUILTIN)) return;
+  const metaFile = path.join(root(), '.builtin.json');
+  let meta = {}; try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch {}
+  meta.seeded = meta.seeded || {}; meta.removed = meta.removed || [];
+  for (const e of fs.readdirSync(BUILTIN, { withFileTypes: true })) {
+    if (!e.isDirectory() || !fs.existsSync(path.join(BUILTIN, e.name, 'SKILL.md'))) continue;
+    const name = safeName(e.name), src = path.join(BUILTIN, e.name), dst = path.join(root(), name);
+    if (meta.removed.includes(name)) continue;
+    const hash = dirHash(src);
+    if (fs.existsSync(dst)) {
+      const untouched = meta.seeded[name] && dirHash(dst) === meta.seeded[name];
+      if (!untouched || meta.seeded[name] === hash) continue;
+      fs.rmSync(dst, { recursive: true, force: true });
+    }
+    copyDir(src, dst);
+    meta.seeded[name] = hash;
+  }
+  fs.writeFileSync(metaFile, JSON.stringify(meta, null, 1));
+}
+function builtinNames() { try { return Object.keys(JSON.parse(fs.readFileSync(path.join(root(), '.builtin.json'), 'utf8')).seeded || {}); } catch { return []; } }
+function markRemoved(name) {
+  const metaFile = path.join(root(), '.builtin.json');
+  try { const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')); if (meta.seeded?.[name] && !meta.removed.includes(name)) { meta.removed.push(name); fs.writeFileSync(metaFile, JSON.stringify(meta, null, 1)); } } catch {}
+}
+
 function register() {
-  ipcMain.handle('skills:list', () => list());
+  try { seedBuiltins(); } catch (err) { console.error('seed skills', err); }
+  ipcMain.handle('skills:list', () => { const b = new Set(builtinNames()); return list().map((x) => ({ ...x, builtin: b.has(x.name) })); });
   ipcMain.handle('skills:import', async (e, kind) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), kind === 'zip'
       ? { title: '选择技能压缩包', properties: ['openFile'], filters: [{ name: 'zip', extensions: ['zip'] }] }
@@ -147,9 +182,9 @@ function register() {
     catch (err) { return { ok: false, msg: String(err.message || err) }; }
   });
   ipcMain.handle('skills:importPath', (_e, p) => { try { return { ok: true, names: importPath(p) }; } catch (err) { return { ok: false, msg: String(err.message || err) }; } });
-  ipcMain.handle('skills:remove', (_e, name) => { fs.rmSync(path.join(root(), safeName(name)), { recursive: true, force: true }); return true; });
+  ipcMain.handle('skills:remove', (_e, name) => { markRemoved(safeName(name)); fs.rmSync(path.join(root(), safeName(name)), { recursive: true, force: true }); return true; });
   ipcMain.handle('skills:read', (_e, name) => readSkill(name));
   ipcMain.handle('skills:copyInto', (_e, { names, dir }) => { try { return copyInto(names, dir); } catch { return []; } });
 }
 
-module.exports = { register, list, importPath, readSkill, copyInto, unzipTo, frontmatter };
+module.exports = { register, seedBuiltins, builtinNames, list, importPath, readSkill, copyInto, unzipTo, frontmatter };

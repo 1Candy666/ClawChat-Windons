@@ -1,0 +1,6 @@
+interface:
+  display_name: "学术写作"
+  short_description: "Structure research arguments across academic fields"
+  default_prompt: "Use $academic-writing for the supplied research task, preserving evidence and adapting to my discipline."
+policy:
+  allow_implicit_invocation: true
