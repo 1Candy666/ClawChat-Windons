@@ -813,17 +813,32 @@ function providerCardHTML(p) {
     </div></div>`;
 }
 
+// credit multipliers Qoder publishes for its tiers (docs.qoder.com/cli/model); other models: no published figure
+const QODER_RATE = { auto: '约 1.0×', ultimate: '约 1.6×', performance: '约 1.1×', efficient: '约 0.3×', lite: '免费' };
+function qoderModelMenu(p) {
+  if (!p.models?.length) return '';
+  const stat = (m) => { const s = p.creditStats?.[m]; return s && s.n ? `实测平均 ${(s.sum / s.n).toFixed(2)} credits/次（${s.n} 次）` : ''; };
+  return `<div class="qmenu" data-qmenu style="display:none">${p.models.map((m) => {
+    const rate = QODER_RATE[m.toLowerCase()];
+    return `<button class="qm-item${m === p.model ? ' on' : ''}" data-qmodel="${esc(m)}"><b>${esc(m)}</b><span>${rate ? '倍率 ' + rate : '倍率未公布'}${stat(m) ? ' · ' + stat(m) : ''}</span></button>`;
+  }).join('')}<div class="desc" style="margin:6px 8px 4px;font-size:11.5px">倍率以 Auto 为 1.0×，来自 Qoder 文档；"实测"是 ClawChat 记下的你实际用掉的 credits。</div></div>`;
+}
+
 function cliCardHTML(p) {
-  const codex = p.kind === 'codex';
+  const codex = p.kind === 'codex', qoder = p.kind === 'qoder';
+  const desc = codex ? '调用本机 <code>codex exec</code>，用你在 Codex 里登录的 ChatGPT 账号。只读模式运行，不会改你的文件。回复是整段出现的（不是逐字），一条一般要几秒到十几秒。'
+    : qoder ? '调用本机 <code>qodercli</code>，用你在 Qoder 里登录的账号，按 credits 计费。能看图。需要先安装（npm i -g @qoder-ai/qodercli）并运行 qodercli login。'
+    : '调用本机 <code>claude -p</code>，用你在 Claude Code 里登录的账号。需要先安装 Claude Code 并登录。';
+  const prog = codex ? 'Codex' : qoder ? 'Qoder' : 'Claude Code';
   return `<div class="card" data-pcard="${p.id}" style="background:#fdfcfa">
     <h3>${codex ? '🟢' : '🟠'} <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:220px">
       <span class="badge">订阅额度</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
-    <div class="desc" style="margin:-4px 0 12px;font-size:12px">${codex
-      ? '调用本机 <code>codex exec</code>，用你在 Codex 里登录的 ChatGPT 账号。只读模式运行，不会改你的文件。回复是整段出现的（不是逐字），一条一般要几秒到十几秒。'
-      : '调用本机 <code>claude -p</code>，用你在 Claude Code 里登录的账号。需要先安装 Claude Code 并登录。'}</div>
+    <div class="desc" style="margin:-4px 0 12px;font-size:12px">${desc}</div>
     <div class="grid2">
-      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : 'claude'}"></div>
-      <div class="field"><label>模型（留空 = 用${codex ? ' Codex' : ' Claude Code'} 自己的默认设置）</label><input data-pf="model" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : '例如 sonnet / opus'}"></div>
+      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : qoder ? 'qodercli' : 'claude'}"></div>
+      <div class="field" style="position:relative"><label>模型（留空 = 用 ${prog} 自己的默认设置）</label>
+        <div style="display:flex;gap:6px"><input data-pf="model" style="flex:1" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : qoder ? '例如 Efficient / Auto' : '例如 sonnet / opus'}">${qoder ? '<button class="btn" data-pact="qmodels" title="读取你的账号能用哪些模型">▾ 选择</button>' : ''}</div>
+        ${qoder ? qoderModelMenu(p) : ''}</div>
     </div>
     ${codex ? `<div class="field"><label>思考强度（越低回得越快、越省额度；聊天用 low 就够）</label>
       <select data-pf="effort">${['minimal', 'low', 'medium', 'high'].map((x) => `<option ${p.effort === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>` : ''}
@@ -927,6 +942,8 @@ function addAgentModal(p) {
 
 // ---------------- events ----------------
 document.addEventListener('click', async (e) => {
+  const qm = e.target.closest('[data-qmodel]');
+  if (qm) { const card = qm.closest('[data-pcard]'); const p = providerById(card.dataset.pcard); if (p) { p.model = qm.dataset.qmodel; save(); renderSettings(); toast(`模型已改为 ${p.model}`); } return; }
   const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],[data-proj],[data-pjstage],[data-pjact],button');
   if (!t) return;
 
@@ -1051,11 +1068,21 @@ document.addEventListener('click', async (e) => {
       status.textContent = st === 'ok' ? '✅ 已登录，可以用了' : st === 'login' ? '❌ 还没登录，点「登录 Muse」' : '❌ 打不开 muse.ai，请检查网络';
       return;
     }
+    if (t.dataset.pact === 'qmodels') {
+      const menu = document.querySelector(`[data-pcard="${p.id}"] [data-qmenu]`);
+      if (menu && menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+      status.textContent = '正在读取你的账号能用的模型…';
+      const r = await window.claw.cliModels({ kind: p.kind, command: p.command });
+      if (!r.ok) { status.textContent = '❌ ' + r.msg; return; }
+      p.models = r.models; save(); renderSettings();
+      const m2 = document.querySelector(`[data-pcard="${p.id}"] [data-qmenu]`); if (m2) m2.style.display = 'block';
+      return;
+    }
     if (t.dataset.pact === 'check') {
       status.textContent = '检测中…';
       const r = await window.claw.cliCheck({ kind: p.kind, command: p.command });
       status.textContent = r.ok ? `✅ 已安装：${r.msg}　接着点「测试对话」确认已登录`
-        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : '安装 Claude Code 后运行 claude 登录'}`;
+        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : p.kind === 'qoder' ? '安装：npm i -g @qoder-ai/qodercli，然后运行 qodercli login' : '安装 Claude Code 后运行 claude 登录'}`;
       return;
     }
     if (t.dataset.pact === 'test') {

@@ -201,6 +201,22 @@ function flattenPrompt(messages) {
   return `以下是你要扮演的角色设定和聊天记录。这是一个纯聊天任务：不要调用任何工具，不要执行命令，不要读写文件，直接输出你要发的下一条聊天消息正文即可。\n\n===== 角色设定 =====\n${sys}\n\n===== 聊天记录 =====\n${convo}\n\n===== 现在轮到你回复 =====`;
 }
 
+// models a command-line agent offers to this account (qodercli prints "MODEL" then one name per line)
+ipcMain.handle('cli:models', (_e, { kind, command }) => new Promise((resolve) => {
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli' }[kind] || 'codex');
+  let out = '', err = '', child;
+  try { child = spawnCli(cmd, ['--list-models'], os.homedir()); } catch (e) { return resolve({ ok: false, msg: String(e.message) }); }
+  const timer = setTimeout(() => { killTree(child); resolve({ ok: false, msg: '超时：30 秒没有返回' }); }, 30000);
+  child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (err += d));
+  child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, msg: String(e.message) }); });
+  child.on('close', () => {
+    clearTimeout(timer);
+    const names = out.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && x !== 'MODEL').map((x) => x.replace(/\s+\(.*\)$/, ''));
+    resolve(names.length ? { ok: true, models: names } : { ok: false, msg: (err.trim() || '没有返回任何模型').slice(0, 300) });
+  });
+}));
+
 ipcMain.handle('cli:check', (_e, { kind, command }) => new Promise((resolve) => {
   const cmd = command || ({ claude: 'claude', qoder: 'qodercli' }[kind] || 'codex');
   let out = '';

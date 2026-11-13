@@ -270,3 +270,7 @@ body.dropping .messages { outline: 3px dashed var(--accent); outline-offset: -10
 .modal .foot { position: sticky; bottom: 0; background: var(--panel); padding: 12px 0 16px; margin-top: 6px; z-index: 1; }
 .pj-head .row-actions { flex-wrap: nowrap; flex-shrink: 0; } .pj-head .row-actions .btn { white-space: nowrap; }
 .pj-head > div:first-child { min-width: 0; }
+.qmenu { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--panel); border: 1px solid var(--line, #e5e0d8); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.12); max-height: 320px; overflow-y: auto; padding: 4px; }
+.qm-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.qm-item:hover { background: rgba(0,0,0,.05); } .qm-item.on { background: rgba(217,119,87,.12); }
+.qm-item span { color: var(--muted, #8a8178); font-size: 12px; white-space: nowrap; }

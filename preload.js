@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('claw', {
   dataPath: () => ipcRenderer.invoke('store:path'),
   openDataFolder: () => ipcRenderer.invoke('open:data-folder'),
   listModels: (cfg) => ipcRenderer.invoke('llm:models', cfg),
+  cliModels: (cfg) => ipcRenderer.invoke('cli:models', cfg),
   cliCheck: (cfg) => ipcRenderer.invoke('cli:check', cfg),
   work: {
     start: (job) => ipcRenderer.send('work:start', job),

@@ -31,7 +31,13 @@ function estTokens(str) {
 }
 function mkUsage(agent, reported, inText, outText) {
   const p = providerById(agent.providerId) || providerById(S.defaultProviderId) || S.providers[0];
-  if (reported && reported.credits != null) return { in: 0, out: 0, credits: reported.credits };
+  if (reported && reported.credits != null) {
+    // remember what each Qoder model really costs, shown next to it in the model picker
+    const p = providerById(agent?.providerId) || providerById(S.defaultProviderId) || S.providers[0];
+    const m = agent?.model || p?.model || '';
+    if (p && m) { p.creditStats = p.creditStats || {}; const s = (p.creditStats[m] = p.creditStats[m] || { n: 0, sum: 0 }); s.n++; s.sum += reported.credits; }
+    return { in: 0, out: 0, credits: reported.credits };
+  }
   const u = reported && (reported.in || reported.out) ? { in: reported.in || 0, out: reported.out || 0 } : { in: estTokens(inText), out: estTokens(outText), est: true };
   if (p && (+p.priceIn || +p.priceOut)) u.cost = (u.in * (+p.priceIn || 0) + u.out * (+p.priceOut || 0)) / 1e6;
   return u;
