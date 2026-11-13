@@ -575,7 +575,7 @@ async function projectAction(act, t) {
   if (act === 'rereview') return runStage(p, st, { reviewOnly: true });
   if (act === 'refix' && st.lastFeedback) return runStage(p, st, st.lastFeedback);
   if (act === 'approve') { if (quizOn(st) && !st.quiz?.passed && !st.quizSkipped) { if (!st.quiz?.qs?.length) await quizStart(p, st); return; } return approveStage(p, st); }
-  if (['quiz-start', 'quiz-submit', 'quiz-skip', 'ask', 'decisions'].includes(act)) return understandAction(act, p, st);
+  if (['quiz-start', 'quiz-submit', 'quiz-skip', 'quiz-ask', 'quiz-simpler', 'ask', 'decisions'].includes(act)) return understandAction(act, p, st, t);
   if (act === 'reject') { const row = $('#pj-reject-row'); if (row) { row.style.display = 'flex'; $('#pj-feedback').focus(); } }
   if (act === 'reject-send') { const v = $('#pj-feedback').value.trim(); if (!v) return toast('写上要改什么'); pact(p, '你', `打回了「${st.title}」：${v.slice(0, 60)}`); await runStage(p, st, { feedback: `（来自用户「${S.userName}」的意见，优先级最高）\n${v}`, humanFeedback: true }); }
 }

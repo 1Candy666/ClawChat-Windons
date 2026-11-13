@@ -280,3 +280,8 @@ body.dropping .messages { outline: 3px dashed var(--accent); outline-offset: -10
 .pj-q textarea { width: 100%; box-sizing: border-box; min-height: 54px; border: 1px solid var(--line, #e5e0d8); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; resize: vertical; }
 .pj-qa-done { font-size: 13px; color: var(--muted, #8a8178); padding: 4px 0; white-space: pre-wrap; }
 .pj-explain > summary { font-weight: 600; } .pj-explain .cb-out { background: #f8fbf6; }
+.pj-fu { margin: 6px 0 0 14px; padding-left: 10px; border-left: 2px solid rgba(217,119,87,.35); font-size: 13px; }
+.pj-fu-q { color: var(--muted, #8a8178); margin-bottom: 2px; } .pj-fu-a .cb-out, .pj-fu-a { line-height: 1.65; }
+.pj-fu-row { display: flex; gap: 6px; align-items: center; margin: 6px 0 0 14px; }
+.pj-fu-row input { flex: 1; border: 1px solid var(--line, #e5e0d8); border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 13px; }
+.pj-fu-row .link { font-size: 12.5px; white-space: nowrap; }

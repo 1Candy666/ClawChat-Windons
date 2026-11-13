@@ -21,6 +21,7 @@ async function recordDecisions(p, st) {
 
 // ---------------- the understanding check ----------------
 const quizOn = (st) => st.quizOn !== false;
+const PLAIN_TALK = '写给没有这个方向背景的人：短句，先说结论再说原因；用这个项目里的具体东西举例（哪个算例、哪个截面、哪一列）；不要引入新术语，非用不可的术语当场用一句话解释；可以打比方';
 function quizAgent(p, st) { return agentById(p.leadId) || agentById(st.reviewerId) || agentById(st.ownerId); }
 
 function parseJsonArray(text) {
@@ -45,7 +46,7 @@ async function quizStart(p, st) {
 - 至少一题问「这个结果说明了什么、不能说明什么」；
 - 可以有一题问「最可能在哪里出错 / 怎么检查对不对」；
 - 不要考数字记忆（除非那个数字本身就是结论），不要考文件名；
-- 问题要具体到这个项目，不要泛泛而谈；每题一两句话。
+- 问题要具体到这个项目，不要泛泛而谈；每题一两句话；问题本身用大白话问，不要堆术语。
 
 只输出一个 JSON 数组，不要别的文字：
 [{"q": "问题", "key": "答到哪几点就算懂了（2~3 点，写给判卷用，不给他看）", "src": "答案主要在哪个文件"}]`;
@@ -69,7 +70,8 @@ async function quizSubmit(p, st) {
 对每一题给出判断，按题目顺序输出一个 JSON 数组，不要别的文字：
 [{"ok": true 或 false, "say": "对他说的话"}]
 - ok 为 true 时，say 用一两句肯定他答对的部分，再补一个容易忽略的点；
-- ok 为 false 时，say 用大白话把这题讲明白（200 字以内），说清他差在哪，并告诉他去看哪个文件的哪一部分。`;
+- ok 为 false 时，say 把这题讲明白（200 字以内），说清他差在哪，并告诉他去看哪个文件的哪一部分。
+- say 要${PLAIN_TALK}。`;
   const r = await callAgent(a, sys, user, { acct: [st.usage, p.usage], temperature: 0.2 });
   const res = parseJsonArray(r.text);
   delete qz.busy;
@@ -96,7 +98,9 @@ function quizHTML(p, st) {
     ${qz.qs.map((x, i) => { const r = qz.results[i]; return `<div class="pj-q">
       <div class="pj-qq">${i + 1}. ${esc(x.q)}</div>
       ${r?.ok ? `<div class="pj-qa-done">${esc(r.answer || qz.answers[i])}</div>` : `<textarea data-pjqa="${i}" rows="2" placeholder="写你的理解…" ${busy ? 'disabled' : ''}>${esc(qz.answers[i] || '')}</textarea>`}
-      ${r ? `<div class="cb-note ${r.ok ? 'okbox' : 'warn'}" style="margin-top:6px"><b>${r.ok ? '✅ 懂了' : '❌ 还差一点'}</b>　${esc(r.say)}</div>` : ''}
+      ${r ? `<div class="cb-note ${r.ok ? 'okbox' : 'warn'}" style="margin-top:6px"><b>${r.ok ? '✅ 懂了' : '❌ 还差一点'}</b>　${esc(r.say)}</div>
+        ${(r.thread || []).map((x) => `<div class="pj-fu"><div class="pj-fu-q">你追问：${esc(x.q)}</div><div class="pj-fu-a">${x.a ? md(x.a) : '<span class="desc">主管在想怎么讲…</span>'}</div></div>`).join('')}
+        <div class="pj-fu-row"><input data-pjfu="${i}" placeholder="哪里没看懂？把那句话贴过来，或者直接问" ${r.busy ? 'disabled' : ''}><button class="btn" data-pjact="quiz-ask" data-qi="${i}" ${r.busy ? 'disabled' : ''}>追问</button><span class="link" data-pjact="quiz-simpler" data-qi="${i}">说简单点</span></div>` : ''}
     </div>`; }).join('')}
     ${qz.error ? `<div class="bubble err" style="margin:6px 0">${esc(qz.error)}</div>` : ''}
     <div class="row-actions">${qz.passed ? (st.status === 'waiting' ? '<button class="btn primary" data-pjact="approve">✅ 通过，进入下一环节</button>' : '')
@@ -113,7 +117,40 @@ function explainHTML(p, st) {
     <div class="cb-suprow"><input class="cb-sup" id="pj-ask" placeholder="哪里没看懂？直接问，主管会结合这个环节的文件讲给你"><button class="btn" data-pjact="ask">问主管</button></div></details>`;
 }
 
-async function understandAction(act, p, st) {
+// follow-up on one question: keep asking until it makes sense
+async function quizAsk(p, st, i, text) {
+  const qz = st.quiz, r = qz?.results?.[i], a = quizAgent(p, st);
+  if (!r || !a || r.busy) return;
+  r.thread = r.thread || [];
+  const item = { q: text, a: '' }; r.thread.push(item); r.busy = true; renderProject(p);
+  const inp = await inlineInputs(p, st, { forReview: true });
+  const sys = `你是「${a.name}」，这个科研项目的主管，正在给「${S.userName}」讲「${st.title}」环节里他没弄懂的地方。他不是这个方向出身，看不懂就会直接问。你的回答要${PLAIN_TALK}。只依据下面的文件，文件里没有的就说没有，不要编。`;
+  const user = `相关文件：${inp.text.slice(0, 30000)}
+
+======== 正在讲的题 ========
+问题：${qz.qs[i].q}
+要点：${qz.qs[i].key}
+他原来的回答：${r.answer || qz.answers[i] || ''}
+你之前的讲解：${r.say}
+${r.thread.slice(0, -1).map((x) => `他追问：${x.q}\n你回答：${x.a}`).join('\n')}
+
+======== 他现在问 ========
+${text}
+
+直接回答他这一问，250 字以内。如果他是没看懂你上一段话里的某个说法，就换一种讲法，别把原话再说一遍。`;
+  const res = await callAgent(a, sys, user, { acct: [(st.usage = st.usage || {}), (p.usage = p.usage || {})], temperature: 0.3, onText: (x) => { item.a = x; renderProjectSoon(p); } });
+  item.a = res.error ? '（出错了：' + res.error + '）' : res.text; delete r.busy;
+  if (!res.error) await window.claw.proj.append(p.dir, st.folder + '/理解关卡.md', `\n\n#### 追问：${text}\n\n${item.a}\n`);
+  save(); renderProject(p);
+}
+
+async function understandAction(act, p, st, t) {
+  if (act === 'quiz-ask' || act === 'quiz-simpler') {
+    const i = +t.dataset.qi; const inp = document.querySelector(`[data-pjfu="${i}"]`);
+    const text = act === 'quiz-simpler' ? '你上面讲的我还是没看懂，能不能用更简单的话、举这个项目里的具体例子再讲一遍？' : inp?.value.trim();
+    if (!text) return inp?.focus();
+    return quizAsk(p, st, i, text);
+  }
   if (act === 'quiz-start') return quizStart(p, st);
   if (act === 'quiz-submit') return quizSubmit(p, st);
   if (act === 'quiz-skip') { st.quizSkipped = true; pact(p, '你', `跳过了「${st.title}」的理解关卡`); return approveStage(p, st); }
