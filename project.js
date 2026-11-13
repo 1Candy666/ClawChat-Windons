@@ -62,6 +62,9 @@ function scan(paths) {
   return out;
 }
 
+// caches and scratch folders that agents (or the tools they drive) leave behind
+const JUNK_DIR = /^(__pycache__|node_modules|\.?venv|.*[_-]?(temp|tmp|cache)|chrome[_-].*)$/i;
+
 function listFiles(dir, rel) {
   const root = inside(dir, rel);
   const out = [];
@@ -69,8 +72,10 @@ function listFiles(dir, rel) {
   const walk = (d, depth) => {
     let ents = [];
     try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    // files of this folder first, then subfolders, so one big temp folder can't crowd out the real outputs
+    ents.sort((a, b) => (a.isDirectory() - b.isDirectory()) || a.name.localeCompare(b.name));
     for (const e of ents) {
-      if (out.length >= 80 || e.name.startsWith('.') || e.name === '__pycache__') continue;
+      if (out.length >= 80 || e.name.startsWith('.') || JUNK_DIR.test(e.name)) continue;
       const full = path.join(d, e.name);
       if (e.isDirectory()) { if (depth < 3) walk(full, depth + 1); continue; }
       let st; try { st = fs.statSync(full); } catch { continue; }

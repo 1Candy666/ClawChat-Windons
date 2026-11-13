@@ -5,8 +5,10 @@
 const CLI_PRESETS = [
   { kind: 'codex', mark: 'Cx', markColor: '#111111', name: 'Codex（ChatGPT 订阅）', command: 'codex', model: '', effort: 'low', desc: '调用你电脑上的 Codex 命令行，走 ChatGPT 订阅额度，不用 API Key' },
   { kind: 'claude', mark: 'CC', markColor: '#D97757', name: 'Claude Code（实验性）', command: 'claude', model: '', effort: '', desc: '调用你电脑上的 Claude Code 命令行（claude -p），走 Claude 订阅额度' },
+  { kind: 'qoder', mark: 'Qd', markColor: '#2F6BFF', name: 'Qoder（命令行）', command: 'qodercli', model: 'Efficient', effort: '', desc: '调用你电脑上的 qodercli，走 Qoder 账号的 credits；能看图。模型填 Efficient / Auto / Performance 等档位' },
 ];
-const isCli = (p) => p && (p.kind === 'codex' || p.kind === 'claude');
+const CLI_KINDS = ['codex', 'claude', 'qoder'];
+const isCli = (p) => p && CLI_KINDS.includes(p.kind);
 const isMuse = (p) => p && p.kind === 'muse';
 const PRESETS = [
   { name: 'DeepSeek', mark: 'DS', markColor: '#4D6BFE', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
@@ -253,7 +255,7 @@ function cleanReply(text, agent) {
 }
 
 // ---------------- work mode ----------------
-const isWorkerAgent = (a) => { const p = a && (providerById(a.providerId) || providerById(S.defaultProviderId) || S.providers[0]); return !!p && (p.kind === 'codex' || p.kind === 'claude'); };
+const isWorkerAgent = (a) => { const p = a && (providerById(a.providerId) || providerById(S.defaultProviderId) || S.providers[0]); return !!p && CLI_KINDS.includes(p.kind); };
 const workReady = (a) => isWorkerAgent(a) && a.work?.enabled && a.work?.dir;
 const WORK_RE = /^\s*\/(干活|work)\s+([\s\S]+)/i;
 const workJobs = new Map(); // jobId -> {chatId, msgId}

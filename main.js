@@ -202,7 +202,7 @@ function flattenPrompt(messages) {
 }
 
 ipcMain.handle('cli:check', (_e, { kind, command }) => new Promise((resolve) => {
-  const cmd = command || (kind === 'claude' ? 'claude' : 'codex');
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli' }[kind] || 'codex');
   let out = '';
   let child;
   try { child = spawnCli(cmd, ['--version'], os.homedir()); } catch (err) { return resolve({ ok: false, msg: String(err.message) }); }
@@ -218,7 +218,14 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
   const cwd = cliWorkDir();
   let args, cmd;
   const lastFile = path.join(os.tmpdir(), `clawchat-${reqId}.txt`);
-  if (kind === 'claude') {
+  if (kind === 'qoder') {
+    cmd = command || 'qodercli';
+    // chat only: no tools at all; the prompt goes in through a file so long chats and Chinese text survive the Windows command line
+    const pf = path.join(os.tmpdir(), `clawchat-${reqId}-prompt.md`);
+    fs.writeFileSync(pf, prompt, 'utf8');
+    args = ['-p', `你的完整输入在文件 ${pf} 里。先用 Read 工具完整读取它，然后只输出你的回复正文。`, '-o', 'stream-json', '--no-session-persistence', '--tools', 'Read', '--'];
+    if (model) args.splice(1, 0, '-m', model);
+  } else if (kind === 'claude') {
     cmd = command || 'claude';
     args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--max-turns', '1'];
     if (model) args.push('--model', model);
@@ -247,7 +254,9 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
       buf = buf.slice(idx + 1);
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
-      if (kind === 'claude') {
+      if (kind === 'qoder') {
+        if (j.type === 'result') { if (j.is_error) lastErr = j.result || j.subtype || 'Qoder 出错'; else finalText = j.result || finalText; if (j.total_credits != null) usage = { in: 0, out: 0, credits: j.total_credits }; }
+      } else if (kind === 'claude') {
         const ev = j.event;
         if (j.type === 'stream_event' && ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
           streamed += ev.delta.text; send('llm:chunk', { reqId, delta: ev.delta.text });
@@ -284,7 +293,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
     send('llm:done', { reqId, usage, replace: finalText && streamed !== finalText ? finalText : undefined });
   });
   child.stdin.on('error', () => {});
-  child.stdin.end(prompt, 'utf8');
+  child.stdin.end(kind === 'qoder' ? '' : prompt, 'utf8');
 }
 
 // ---------- Muse web bridge (drives the user's own logged-in muse.ai page) ----------
@@ -406,7 +415,7 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
   const send = (ch, payload) => {
     if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
   };
-  if (kind === 'codex' || kind === 'claude') return runCli(send, reqId, { kind, command, model, effort, messages });
+  if (kind === 'codex' || kind === 'claude' || kind === 'qoder') return runCli(send, reqId, { kind, command, model, effort, messages });
   if (kind === 'muse') return runMuse(send, reqId, { threadUrl, messages: attach.resolveMessages(messages, 'noimg').messages });
   const ctrl = new AbortController();
   controllers.set(reqId, ctrl);

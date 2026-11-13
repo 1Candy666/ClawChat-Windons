@@ -31,6 +31,7 @@ function estTokens(str) {
 }
 function mkUsage(agent, reported, inText, outText) {
   const p = providerById(agent.providerId) || providerById(S.defaultProviderId) || S.providers[0];
+  if (reported && reported.credits != null) return { in: 0, out: 0, credits: reported.credits };
   const u = reported && (reported.in || reported.out) ? { in: reported.in || 0, out: reported.out || 0 } : { in: estTokens(inText), out: estTokens(outText), est: true };
   if (p && (+p.priceIn || +p.priceOut)) u.cost = (u.in * (+p.priceIn || 0) + u.out * (+p.priceOut || 0)) / 1e6;
   return u;
@@ -39,12 +40,16 @@ function addUsage(total, u) {
   if (!total || !u) return;
   total.in = (total.in || 0) + (u.in || 0); total.out = (total.out || 0) + (u.out || 0);
   if (u.cost != null) total.cost = (total.cost || 0) + u.cost;
+  if (u.credits != null) total.credits = (total.credits || 0) + u.credits;
   if (u.est) total.est = true;
 }
 function fmtUsage(u) {
-  if (!u || !(u.in || u.out)) return '';
+  if (!u || !(u.in || u.out || u.credits)) return '';
   const k = (n) => (n >= 10000 ? (n / 10000).toFixed(1) + ' 万' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
-  return `${u.est ? '约 ' : ''}输入 ${k(u.in)} / 输出 ${k(u.out)} tokens${u.cost != null ? ` · ¥${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(2)}` : ''}`;
+  const parts = [];
+  if (u.in || u.out) parts.push(`${u.est ? '约 ' : ''}输入 ${k(u.in)} / 输出 ${k(u.out)} tokens${u.cost != null ? ` · ¥${u.cost < 0.01 ? u.cost.toFixed(4) : u.cost.toFixed(2)}` : ''}`);
+  if (u.credits) parts.push(`Qoder ${u.credits < 1 ? u.credits.toFixed(2) : u.credits.toFixed(1)} credits`);
+  return parts.join(' · ');
 }
 const usageTotal = (u) => (u?.in || 0) + (u?.out || 0);
 

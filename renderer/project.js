@@ -82,6 +82,7 @@ ${p.stages.slice(0, i).map((s, k) => `${k + 4}. ${s.folder}/交接.md 以及它�
 要求：
 - 实际动手完成任务：需要算就写脚本去算，需要画就真的画出来。脚本也保存在 ${st.folder}/ 里，方便别人复现。
 - 产出只放在 ${st.folder}/ 里。可以读其他文件夹和项目外的原始资料，但不要修改它们。
+- 临时文件（缓存、浏览器配置目录、中间文件等）放到系统临时目录，不要留在项目文件夹里；用完能删就删。
 - 发现上游的产出有问题，不要自己悄悄修正，写进交接.md 的「假设与没把握的地方」。
 - 完成后写 ${st.folder}/交接.md，必须包含这几节：
 ${HANDOFF_FMT}
@@ -97,7 +98,8 @@ async function inlineInputs(p, st, { forReview } = {}) {
     text += `\n\n################ 环节「${s.title}」的文件夹 ${s.folder}/ ################\n文件清单：${files.map((f) => `${f.rel}（${f.size} 字节）`).join('、') || '（空）'}`;
     for (const f of files) {
       if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(f.rel)) { if (atts.length < 8) atts.push({ name: f.rel, path: f.path, size: f.size, kind: 'image' }); continue; }
-      if (!/\.(md|txt|csv|tsv|json)$/i.test(f.rel) || f.rel === '任务.md' && s !== st) continue;
+      if (!/\.(md|txt|csv|tsv|json|py|m|r|jl|svg|log)$/i.test(f.rel) || f.rel === '任务.md' && s !== st) continue;
+      if (/\.svg$/i.test(f.rel) && f.size > 40000) { text += `\n\n[${f.rel} 是 ${f.size} 字节的矢量图，太大没有贴出，看对应的 png 预览]`; continue; }
       if (budget <= 0) { text += `\n\n[${f.rel} 没有贴出来：内容太多了]`; continue; }
       const body = await window.claw.proj.read(p.dir, s.folder + '/' + f.rel, Math.min(30000, budget));
       if (body == null) continue;
@@ -189,7 +191,8 @@ const REVIEW_RULES = `审查要求：
 - 对照「任务.md」的合格标准和「项目说明.md」的验收标准，逐条检查。
 - 核对交接.md 里说的和实际文件是否一致；抽查关键数字能否从上游数据得到。
 - 只指出真正影响结果正确性或可用性的问题，不要挑措辞和风格。
-- 回复的第一行必须是「结论：通过」或「结论：需要修改」（只能二选一）。
+- 回复的第一行必须是「结论：通过」「结论：需要修改」「结论：无法核实」三者之一。
+- 「需要修改」只用于你确实发现了错误或缺漏。你自己看不到、读不了的东西（例如图片看不见、原始数据没贴出来），不算负责人的错，不要据此要求修改；如果正是这些东西决定了能不能通过，就写「结论：无法核实」，并说明需要谁、用什么方式去核实。
 - 之后分两节写：「## 检查了什么」（你实际核对的内容和结果）和「## 问题」（编号列出；每条写明在哪个文件、哪里不对、应该怎么改；没有就写"无"）。`;
 
 async function runReviewer(p, st, run) {
@@ -233,8 +236,9 @@ ${REVIEW_RULES}
     text = r.text;
   }
   const head = text.slice(0, 200);
-  const pass = /结论[:：]\s*通过/.test(head) && !/结论[:：]\s*需要修改/.test(head);
-  return { pass, text };
+  const unsure = /结论[:：]\s*无法核实/.test(head);
+  const pass = !unsure && /结论[:：]\s*通过/.test(head) && !/结论[:：]\s*需要修改/.test(head);
+  return { pass, unsure, text };
 }
 
 // the owner's work is already in the folder and only the review step failed
@@ -274,8 +278,9 @@ async function runStage(p, st, { feedback, humanFeedback, reviewOnly } = {}) {
       st.review = { pass: rv.pass, text: rv.text, by: rv.auto ? '' : st.reviewerId, auto: !!rv.auto, round: st.round || 0, skipped: rv.skipped };
       const rvName = rv.auto ? '自动比对' : agentName(st.reviewerId);
       await window.claw.proj.append(p.dir, st.folder + '/审查.md', `\n\n# 第 ${(st.round || 0) + 1} 次审查（${rvName}，${new Date().toLocaleString('zh-CN')}）\n\n${rv.text}\n`);
-      if (!rv.auto) pact(p, rvName, rv.skipped ? `「${st.title}」没有审查人，跳过审查` : rv.pass ? `审查通过了「${st.title}」` : `审查「${st.title}」：需要修改`);
+      if (!rv.auto) pact(p, rvName, rv.skipped ? `「${st.title}」没有审查人，跳过审查` : rv.pass ? `审查通过了「${st.title}」` : rv.unsure ? `「${st.title}」有些地方核实不了，交给你判断` : `审查「${st.title}」：需要修改`);
       if (rv.pass) break;
+      if (rv.unsure) { st.note = `审查人「${rvName}」有些地方核实不了（见审查意见），需要你来看一眼再决定：通过，或者写上意见打回。`; break; }
       if ((st.round || 0) >= PROJ_MAX_ROUNDS) { st.note = `审查了 ${PROJ_MAX_ROUNDS + 1} 次仍未通过，需要你来决定：通过，或者写上意见打回。`; break; }
       st.round = (st.round || 0) + 1; fb = rv.text; humanFeedback = false;
     }

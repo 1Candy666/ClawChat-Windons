@@ -84,6 +84,17 @@ function describeItem(it, phase) {
 
 function buildArgs(job, lastFile) {
   const { kind, model, effort, dir, level, extraDirs = [], network } = job;
+  if (kind === 'qoder') {
+    // the long prompt lives in a file (see startJob); the command line only points at it
+    const args = ['-p', `你的完整任务说明在文件 ${job.promptFile} 里。先用 Read 工具完整读取它，然后严格按里面的要求执行。`, '-o', 'stream-json', '-w', dir];
+    if (job.sessionId) args.push('-r', job.sessionId);
+    if (model) args.push('-m', model);
+    for (const d of extraDirs) args.push('--add-dir', d);
+    if (level === 'full') args.push('--dangerously-skip-permissions');
+    else if (level === 'read') args.push('--tools', 'Read', 'Glob', 'Grep', '--');
+    else args.push('--permission-mode', 'accept_edits');
+    return args;
+  }
   if (kind === 'claude') {
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (level === 'full') args.push('--dangerously-skip-permissions');
@@ -125,7 +136,13 @@ function startJob(sender, job) {
   const copied = require('./attach').copyInto(job.attachments, job.dir);
   if (copied.length) job.prompt += `\n\n用户提供的附件已复制到工作文件夹：\n${copied.map((c) => '- ' + c).join('\n')}`;
   const lastFile = path.join(os.tmpdir(), `clawchat-work-${job.jobId}.txt`);
-  const cmd = job.command || (job.kind === 'claude' ? 'claude' : 'codex');
+  const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli' }[job.kind] || 'codex');
+  if (job.kind === 'qoder') {
+    // prompt file outside the project folder, so it never ends up among the outputs
+    job.promptFile = path.join(os.tmpdir(), `clawchat-work-${job.jobId}-prompt.md`);
+    fs.writeFileSync(job.promptFile, job.prompt, 'utf8');
+    if (job.level !== 'full') job.extraDirs = [...(job.extraDirs || []), os.tmpdir()];
+  }
   const args = buildArgs(job, lastFile);
   const started = Date.now();
   let child;
@@ -149,8 +166,9 @@ function startJob(sender, job) {
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
       if (j.type === 'thread.started' && j.thread_id) sessionId = j.thread_id;
-      if (job.kind === 'claude') {
-        if (j.type === 'system' && j.session_id) sessionId = j.session_id;
+      if (job.kind === 'claude' || job.kind === 'qoder') {
+        if (j.session_id) sessionId = j.session_id;
+        if (j.type === 'system' && j.subtype === 'api_retry') send({ type: 'log', entry: { kind: 'warn', text: `⚠ 连接中断，第 ${j.attempt}/${j.max_retries} 次重试` } });
         if (j.type === 'assistant') for (const c of j.message?.content || []) {
           if (c.type === 'tool_use') {
             const inp = c.input || {};
@@ -159,7 +177,8 @@ function startJob(sender, job) {
             if (inp.file_path && /Edit|Write/.test(c.name)) changed.add(inp.file_path);
           } else if (c.type === 'text' && c.text.trim()) send({ type: 'log', entry: { kind: 'think', text: '💬 ' + c.text.trim().slice(0, 160) } });
         }
-        if (j.type === 'result' && j.usage) usage = { in: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0) + (j.usage.cache_creation_input_tokens || 0), out: j.usage.output_tokens || 0 };
+        if (j.type === 'result' && j.total_credits != null) usage = { in: 0, out: 0, credits: j.total_credits };
+        else if (j.type === 'result' && j.usage) usage = { in: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0) + (j.usage.cache_creation_input_tokens || 0), out: j.usage.output_tokens || 0 };
         if (j.type === 'result') { if (j.is_error) lastErr = j.result || j.subtype; else finalText = j.result || finalText; }
         continue;
       }
@@ -180,6 +199,7 @@ function startJob(sender, job) {
   child.on('close', (code) => {
     jobs.delete(job.jobId);
     try { const t = fs.readFileSync(lastFile, 'utf8').trim(); if (t) finalText = t; fs.unlinkSync(lastFile); } catch {}
+    if (job.promptFile) try { fs.unlinkSync(job.promptFile); } catch {}
     const files = scanChanged(job.dir, started);
     for (const p of changed) if (!files.find((f) => f.path === p) && fs.existsSync(p)) files.unshift({ path: p, size: fs.statSync(p).size });
     let imgs = 0;
@@ -195,7 +215,7 @@ function startJob(sender, job) {
     send({ type: 'done', text: finalText, files: out, secs, usage, sessionId });
   });
   child.stdin.on('error', () => {});
-  child.stdin.end(job.prompt, 'utf8');
+  child.stdin.end(job.kind === 'qoder' ? '' : job.prompt, 'utf8');
 }
 
 function register() {
