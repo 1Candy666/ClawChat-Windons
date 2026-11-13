@@ -1237,7 +1237,7 @@ document.addEventListener('paste', (e) => {
   activeChatId = sorted[0]?.id || null;
   S.templates = S.templates || [];
   S.projects = S.projects || [];
-  S.projects.forEach((pj) => { if (pj.status === 'drafting') { pj.status = 'draft-error'; pj.error = '程序关闭时起草被中断'; } pj.stages.forEach((st) => { if (['running', 'review', 'revising'].includes(st.status)) { st.status = 'stopped'; delete st.live; } }); });
+  S.projects.forEach((pj) => { delete pj.exporting; if (pj.status === 'drafting') { pj.status = 'draft-error'; pj.error = '程序关闭时起草被中断'; } pj.stages.forEach((st) => { if (['running', 'review', 'revising'].includes(st.status)) { st.status = 'stopped'; delete st.live; } }); });
   if (S.providers.some((p) => p.keyLost)) setTimeout(() => toast('有 API Key 解密失败（可能换了电脑或系统账号），请到「设置」里重新填写', 7000), 600);
   if (!S.providers.length) { view = 'settings'; setTimeout(() => toast('先添加一个模型服务（推荐 DeepSeek），填好 API Key 就能聊了', 5000), 400); }
   save();

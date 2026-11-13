@@ -525,5 +525,6 @@ require('./attach').register();
 require('./pachat').register();
 require('./project').register();
 require('./skills').register();
+require('./ppt').register();
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

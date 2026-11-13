@@ -1,6 +1,6 @@
 {
   "name": "clawchat",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "在 Windows 上和你的多个 AI 智能体单聊、拉群，并让它们动手干活",
   "main": "main.js",
   "scripts": {
@@ -20,7 +20,8 @@
   "license": "MIT",
   "devDependencies": {
     "@electron/packager": "^20.3.0",
-    "electron": "^45.2.3"
+    "electron": "^45.2.3",
+    "pptxgenjs": "^4.0.1"
   },
   "productName": "ClawChat",
   "repository": {
