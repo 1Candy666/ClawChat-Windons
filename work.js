@@ -92,8 +92,22 @@ function buildArgs(job, lastFile) {
     if (model) args.push('--model', model);
     return args;
   }
+  if (job.sessionId) {
+    // resume an earlier session of this agent: it keeps its memory of the work. `resume` has no -s/-C flags.
+    const args = ['exec', 'resume', job.sessionId, '--json', '--skip-git-repo-check', '-o', lastFile];
+    if (level === 'full') args.push('--dangerously-bypass-approvals-and-sandbox');
+    else {
+      args.push('-c', `sandbox_mode=${level === 'read' ? 'read-only' : 'workspace-write'}`);
+      if (network && level !== 'read') args.push('-c', 'sandbox_workspace_write.network_access=true');
+    }
+    if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    if (model) args.push('-m', model);
+    args.push('-');
+    return args;
+  }
   const args = ['exec', '--json', '--skip-git-repo-check', '-C', dir, '-o', lastFile];
   if (level === 'full') args.push('-s', 'danger-full-access');
+  else if (level === 'read') args.push('-s', 'read-only');
   else {
     args.push('-s', 'workspace-write');
     for (const d of extraDirs) args.push('--add-dir', d);
@@ -120,18 +134,23 @@ function startJob(sender, job) {
   } catch (err) { return send({ type: 'done', error: String(err.message) }); }
   const rec = { child, aborted: false };
   jobs.set(job.jobId, rec);
-  send({ type: 'log', entry: { kind: 'info', text: `开始执行 · ${cmd} · ${job.level === 'full' ? '完全访问' : '仅工作文件夹可写'} · ${job.dir}` } });
+  send({ type: 'log', entry: { kind: 'info', text: `开始执行 · ${cmd}${job.sessionId ? '（接着上次的会话）' : ''} · ${job.level === 'full' ? '完全访问' : job.level === 'read' ? '只读' : '仅项目文件夹可写'} · ${job.dir}` } });
 
-  let buf = '', errTail = '', lastErr = '', finalText = '', changed = new Set(), usage;
+  let buf = '', errTail = '', lastErr = '', finalText = '', changed = new Set(), usage, sessionId = job.sessionId || null;
+  const raw = (line) => { if (job.rawLog) try { fs.mkdirSync(path.dirname(job.rawLog), { recursive: true }); fs.appendFileSync(job.rawLog, line + '\n'); } catch {} };
+  raw(`\n===== ${new Date().toISOString()} ${cmd} ${args.filter((x) => x !== '-').join(' ')}\n----- prompt -----\n${job.prompt}\n----- events -----`);
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (d) => {
     buf += d;
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      raw(line);
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
+      if (j.type === 'thread.started' && j.thread_id) sessionId = j.thread_id;
       if (job.kind === 'claude') {
+        if (j.type === 'system' && j.session_id) sessionId = j.session_id;
         if (j.type === 'assistant') for (const c of j.message?.content || []) {
           if (c.type === 'tool_use') {
             const inp = c.input || {};
@@ -156,7 +175,7 @@ function startJob(sender, job) {
     }
   });
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); });
+  child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); raw('[stderr] ' + String(d).trimEnd()); });
   child.on('error', (err) => { lastErr = `无法启动「${cmd}」：${err.message}`; });
   child.on('close', (code) => {
     jobs.delete(job.jobId);
@@ -166,14 +185,14 @@ function startJob(sender, job) {
     let imgs = 0;
     const out = files.slice(0, 30).map((f) => ({ path: f.path, rel: path.relative(job.dir, f.path), size: f.size, img: IMG.test(f.path) && imgs++ < 6 ? thumb(f.path) : null }));
     const secs = Math.round((Date.now() - started) / 1000);
-    if (rec.aborted) return send({ type: 'done', stopped: true, text: finalText, files: out, secs, usage });
+    if (rec.aborted) return send({ type: 'done', stopped: true, text: finalText, files: out, secs, usage, sessionId });
     if (code !== 0 && !finalText) {
       let msg = lastErr || errTail.trim().split('\n').slice(-4).join('\n') || `进程退出码 ${code}`;
       if (/not recognized|not found|ENOENT/i.test(msg)) msg = `找不到命令「${cmd}」。\n${msg}`;
       if (/sandbox/i.test(msg)) msg += '\n（可能是 Windows 沙箱不可用：可在联系人「工作模式」里改成「完全访问」，或检查 Codex 版本）';
-      return send({ type: 'done', error: msg.slice(0, 1200), files: out, secs, usage });
+      raw('----- failed: ' + msg); return send({ type: 'done', error: msg.slice(0, 1200), files: out, secs, usage, sessionId });
     }
-    send({ type: 'done', text: finalText, files: out, secs, usage });
+    send({ type: 'done', text: finalText, files: out, secs, usage, sessionId });
   });
   child.stdin.on('error', () => {});
   child.stdin.end(job.prompt, 'utf8');

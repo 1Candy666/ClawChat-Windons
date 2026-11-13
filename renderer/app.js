@@ -521,13 +521,15 @@ function renderAll() { renderRail(); renderList(); renderMain(); }
 function renderRail() {
   document.querySelectorAll('.rail-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('#list-add').style.visibility = view === 'tasks' ? 'hidden' : 'visible';
-  $('#list-add').title = view === 'agents' ? '新建联系人' : view === 'settings' ? '添加模型服务' : '新建群聊 / 私聊';
+  $('#search').style.visibility = view === 'settings' || view === 'projects' ? 'hidden' : 'visible';
+  $('#list-add').title = view === 'projects' ? '新建项目' : view === 'agents' ? '新建联系人' : view === 'settings' ? '添加模型服务' : '新建群聊 / 私聊';
   $('#search').style.visibility = view === 'settings' ? 'hidden' : 'visible';
 }
 
 function renderList() {
   const body = $('#list-body');
   if (view === 'tasks') return renderTaskFilters(body);
+  if (view === 'projects') return renderProjectList(body);
   const f = filter.trim().toLowerCase();
   if (view === 'chats') {
     const chats = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0))
@@ -567,6 +569,7 @@ function renderMain() {
     renderChat(chat);
   } else if (view === 'agents') renderAgentEditor();
   else if (view === 'tasks') renderTasksPage();
+  else if (view === 'projects') renderProjectsPage();
   else renderSettings();
 }
 
@@ -922,9 +925,14 @@ function addAgentModal(p) {
 
 // ---------------- events ----------------
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],button');
+  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],[data-proj],[data-pjstage],[data-pjact],button');
   if (!t) return;
 
+  if (t.dataset.wopen) { window.claw.work.open(t.dataset.wopen); return; }
+  if (t.dataset.wreveal) { window.claw.work.reveal(t.dataset.wreveal); return; }
+  if (t.dataset.proj) { projSel = { pid: t.dataset.proj, sid: null }; renderList(); renderProjectsPage(); return; }
+  if (t.dataset.pjstage) { projSel.sid = t.dataset.pjstage; const pj = projById(projSel.pid); if (pj) renderProject(pj); return; }
+  if (t.dataset.pjact) { projectAction(t.dataset.pjact, t); return; }
   if (t.dataset.tfilter) { taskFilter = t.dataset.tfilter; renderList(); renderTasksPage(); return; }
   if (t.dataset.tjump) { const [c, mid] = t.dataset.tjump.split('|'); jumpToTask(c, mid); return; }
   if (t.id === 'pa-pair' || t.id === 'pa-off') { const ag = agentById(activeAgentId); if (ag) pachatCardAction(t.id, ag); return; }
@@ -1061,7 +1069,8 @@ document.addEventListener('click', async (e) => {
 
   switch (t.id) {
     case 'list-add':
-      if (view === 'chats') newChatModal();
+      if (view === 'projects') newProjectModal();
+      else if (view === 'chats') newChatModal();
       else if (view === 'agents') {
         const a = { id: uid('a'), name: '新联系人', avatar: EMOJIS[Math.floor(Math.random() * EMOJIS.length)], color: COLORS[Math.floor(Math.random() * COLORS.length)], providerId: '', model: '', temperature: 0.8, persona: '你是一个友好的助手。', memory: '' };
         S.agents.push(a); activeAgentId = a.id; save(); renderList(); renderMain(); $('#f-name')?.select();
@@ -1102,6 +1111,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
+  if (t.dataset.pjf === 'task') { const pj = projById(projSel.pid), st = pj && stageOf(pj, projSel.sid); if (st) { st.task = t.value; save(); } return; }
   if (t.id === 'search') { filter = t.value; if (view === 'tasks') renderTasksPage(); else renderList(); return; }
   const agent = agentById(activeAgentId);
   if (view === 'agents' && agent) {
@@ -1126,6 +1136,7 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.dataset.pjf && t.dataset.pjf !== 'task') { const pj = projById(projSel.pid), st = pj && stageOf(pj, projSel.sid); if (st) { st[t.dataset.pjf] = t.type === 'checkbox' ? t.checked : t.value; save(); syncPlan(pj); renderProject(pj); } return; }
   if (t.id === 'att-file' && t.files.length) { const c = chatById(activeChatId); if (c) addFiles(c, [...t.files]); t.value = ''; return; }
   if (t.id === 'av-file' && t.files[0]) {
     const agent = agentById(activeAgentId); const f = t.files[0];
@@ -1160,6 +1171,8 @@ document.addEventListener('keydown', (e) => {
   if (e.target.id === 'composer-input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault(); $('#btn-send').click();
   }
+  if (e.key === 'Enter' && !e.isComposing && e.target.id === 'pj-chat-input') { e.preventDefault(); projectAction('chat', e.target); }
+  if (e.key === 'Enter' && !e.isComposing && e.target.id === 'pj-feedback') { e.preventDefault(); projectAction('reject-send', e.target); }
   if (e.key === 'Escape') $('#modal-root').innerHTML = '';
 });
 
@@ -1190,6 +1203,8 @@ document.addEventListener('paste', (e) => {
   const sorted = [...S.chats].sort((a, b) => (b.updated || 0) - (a.updated || 0));
   activeChatId = sorted[0]?.id || null;
   S.templates = S.templates || [];
+  S.projects = S.projects || [];
+  S.projects.forEach((pj) => { if (pj.status === 'drafting') { pj.status = 'draft-error'; pj.error = '程序关闭时起草被中断'; } pj.stages.forEach((st) => { if (['running', 'review', 'revising'].includes(st.status)) { st.status = 'stopped'; delete st.live; } }); });
   if (S.providers.some((p) => p.keyLost)) setTimeout(() => toast('有 API Key 解密失败（可能换了电脑或系统账号），请到「设置」里重新填写', 7000), 600);
   if (!S.providers.length) { view = 'settings'; setTimeout(() => toast('先添加一个模型服务（推荐 DeepSeek），填好 API Key 就能聊了', 5000), 400); }
   save();

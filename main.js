@@ -496,5 +496,6 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
 require('./work').register();
 require('./attach').register();
 require('./pachat').register();
+require('./project').register();
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
