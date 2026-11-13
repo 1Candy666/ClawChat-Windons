@@ -222,8 +222,13 @@ ${inp.text}
 
 ${REVIEW_RULES}
 - 你只能看到贴出来的内容。没法核实的地方（比如看不到的原始数据、没贴出来的大文件），要明确写"无法核实"，不要当作已通过。`;
-    const r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: 0.2 });
-    if (run.stop) throw new CollabStop();
+    let r;
+    for (let n = 0; n < 3; n++) {
+      r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: 0.2 });
+      if (run.stop) throw new CollabStop();
+      if (!r.error && r.text) break;
+      if (n < 2) { st.log.push({ kind: 'info', text: `[审查] ${a.name} 没连上（${String(r.error || '没有返回内容').slice(0, 80)}），${(n + 1) * 5} 秒后重试` }); renderProjectSoon(p); await new Promise((ok) => setTimeout(ok, (n + 1) * 5000)); if (run.stop) throw new CollabStop(); }
+    }
     if (r.error || !r.text) throw new Error(`审查人 ${a.name} 出错：${r.error || '没有返回内容'}`);
     text = r.text;
   }
@@ -232,7 +237,10 @@ ${REVIEW_RULES}
   return { pass, text };
 }
 
-async function runStage(p, st, { feedback, humanFeedback } = {}) {
+// the owner's work is already in the folder and only the review step failed
+function canRereview(st) { return ['error', 'stopped'].includes(st.status) && !!(st.delivered || (st.handoff && /^审查人/.test(st.error || ''))); }
+
+async function runStage(p, st, { feedback, humanFeedback, reviewOnly } = {}) {
   if (projRuns.has(p.id)) return toast('这个项目正在运行，等它停下来再操作');
   const run = { stop: false, reqIds: new Set(), jobIds: new Set() };
   projRuns.set(p.id, run);
@@ -240,19 +248,25 @@ async function runStage(p, st, { feedback, humanFeedback } = {}) {
   st.log = st.log || []; st.error = '';
   try {
     await window.claw.proj.write(p.dir, st.folder + '/任务.md', `# ${st.title}：任务说明\n\n${st.task}\n`);
-    if (!feedback) { st.round = 0; st.review = null; st.check = null; st.log = []; st.sessionId = null; st.handoff = ''; }
+    if (reviewOnly) { /* keep the delivered work, only redo checking and review */ }
+    else if (!feedback) { st.delivered = false; st.round = 0; st.review = null; st.check = null; st.log = []; st.sessionId = null; st.handoff = ''; }
     else if (humanFeedback) st.round = 0;
     st.stale = false; st.note = '';
     p.stages.slice(p.stages.indexOf(st) + 1).forEach((s) => { if (s.status === 'done' || s.status === 'waiting') s.stale = true; });
     let fb = feedback || null;
     for (;;) {
-      st.status = fb ? 'revising' : 'running';
-      pact(p, agentName(st.ownerId), fb ? `开始按${humanFeedback ? '你的' : '审查'}意见修改「${st.title}」` : `开始做「${st.title}」`);
-      await syncPlan(p); save(); renderProject(p);
-      const said = await runOwner(p, st, run, fb);
-      pact(p, agentName(st.ownerId), `交付了「${st.title}」：${(said || '').replace(/\s+/g, ' ').slice(0, 80)}`);
+      if (reviewOnly) { reviewOnly = false; pact(p, '系统', `「${st.title}」的产出保留，只重新审查`); }
+      else {
+        st.status = fb ? 'revising' : 'running'; st.delivered = false;
+        pact(p, agentName(st.ownerId), fb ? `开始按${humanFeedback ? '你的' : '审查'}意见修改「${st.title}」` : `开始做「${st.title}」`);
+        await syncPlan(p); save(); renderProject(p);
+        const said = await runOwner(p, st, run, fb);
+        st.delivered = true;
+        pact(p, agentName(st.ownerId), `交付了「${st.title}」：${(said || '').replace(/\s+/g, ' ').slice(0, 80)}`);
+      }
       st.status = 'review'; await syncPlan(p); save(); renderProject(p);
       const ck = await runCheck(p, st);
+      save(); renderProject(p);
       if (ck) pact(p, '自动比对', ck.ok ? `「${st.title}」的产出和参考结果一致（${ck.compared} 个单元格）` : `「${st.title}」的产出和参考结果不一致${ck.error ? '：' + ck.error : `，${ck.problems.length} 处`}`);
       let rv;
       if (ck && !ck.ok) rv = { pass: false, text: checkFeedback(st), auto: true };
@@ -285,7 +299,7 @@ async function runPipeline(p) {
     if (st.status === 'done') continue;
     if (st.status === 'waiting') { projSel.sid = st.id; renderProject(p); toast(`「${st.title}」在等你确认`); return; }
     projSel.sid = st.id;
-    const s = await runStage(p, st);
+    const s = await runStage(p, st, { reviewOnly: canRereview(st) });
     if (s !== 'done') return;
   }
   pact(p, '系统', '所有环节都完成了'); save(); renderProject(p);
@@ -447,7 +461,8 @@ function stagePanelHTML(p, st) {
   const files = (st.files || []).filter((f) => !['任务.md'].includes(f.rel));
   let actions = '';
   if (!running) {
-    if (['pending', 'error', 'stopped'].includes(st.status)) actions = `<button class="btn primary" data-pjact="run">▶ ${st.status === 'pending' ? '开始这个环节' : '重新做这个环节'}</button>`;
+    if (canRereview(st)) actions = `<button class="btn primary" data-pjact="rereview">▶ 只重新审查（产出保留）</button><button class="btn" data-pjact="run">从头重做</button>`;
+    else if (['pending', 'error', 'stopped'].includes(st.status)) actions = `<button class="btn primary" data-pjact="run">▶ ${st.status === 'pending' ? '开始这个环节' : '重新做这个环节'}</button>`;
     else if (st.status === 'waiting') actions = `<button class="btn primary" data-pjact="approve">✅ 通过，进入下一环节</button><button class="btn" data-pjact="reject">打回修改</button>`;
     else if (st.status === 'done') actions = `<button class="btn" data-pjact="reject">打回修改</button><button class="btn" data-pjact="run">从头重做</button>`;
   } else if (mine) actions = `<button class="btn danger" data-pjact="stop">■ 停止</button>`;
@@ -542,6 +557,7 @@ async function projectAction(act, t) {
     const s = await runStage(p, st);
     if (s === 'done' && t.dataset.then !== 'stay') { const nx = p.stages[p.stages.indexOf(st) + 1]; if (nx && nx.status === 'pending') toast(`「${st.title}」完成了。下一个是「${nx.title}」，点「按顺序往下做」继续。`, 4000); }
   }
+  if (act === 'rereview') return runStage(p, st, { reviewOnly: true });
   if (act === 'approve') { st.status = 'done'; st.note = ''; pact(p, '你', `确认通过了「${st.title}」`); await syncPlan(p); save(); renderProject(p); }
   if (act === 'reject') { const row = $('#pj-reject-row'); if (row) { row.style.display = 'flex'; $('#pj-feedback').focus(); } }
   if (act === 'reject-send') { const v = $('#pj-feedback').value.trim(); if (!v) return toast('写上要改什么'); pact(p, '你', `打回了「${st.title}」：${v.slice(0, 60)}`); await runStage(p, st, { feedback: `（来自用户「${S.userName}」的意见，优先级最高）\n${v}`, humanFeedback: true }); }
