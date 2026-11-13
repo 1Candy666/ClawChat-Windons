@@ -57,7 +57,7 @@ function stageContextNote(p, st) {
 ${prev.length ? '前面的环节：' + prev.map((s) => `${s.title}（${s.folder}/，负责人 ${agentName(s.ownerId)}）`).join('；') + '。' : '你是第一个环节。'}
 ${p.stages[i + 1] ? `你做完之后交给：${p.stages[i + 1].title}（负责人 ${agentName(p.stages[i + 1].ownerId)}）。` : '你是最后一个环节。'}`;
 }
-const HANDOFF_FMT = `## 做了什么\n## 产出文件\n（逐个列出文件名和里面是什么）\n## 怎么验证的\n## 假设与没把握的地方\n## 给下一环节的提醒`;
+const HANDOFF_FMT = `## 讲给你听\n（写给项目负责人本人看，不是给下一个 AI。用大白话讲：这一步在整个研究里是干什么的；做了什么；为什么这么做、而不是别的做法；结果说明了什么、不能说明什么；最可能在哪里出错。用到的专业概念各用一句话解释。关键数字最多三五个，不要堆表格）\n## 做了什么\n## 产出文件\n（逐个列出文件名和里面是什么）\n## 怎么验证的\n## 关键决策\n（这一步里需要说明理由的选择：参数、阈值、方法、口径、取舍。每条写三行：决策 / 理由 / 依据（文件名、文献或用户原话；没有依据就写"属于判断"）。没有就写"无"）\n## 假设与没把握的地方\n## 给下一环节的提醒`;
 
 function ownerPromptDoer(p, st, feedback) {
   const i = p.stages.indexOf(st);
@@ -165,6 +165,7 @@ ${HANDOFF_FMT}`;
   }
   st.handoff = await window.claw.proj.read(p.dir, st.folder + '/交接.md', 30000);
   st.files = await window.claw.proj.files(p.dir, st.folder);
+  await recordDecisions(p, st).catch(() => {});
   return finalText;
 }
 
@@ -255,7 +256,7 @@ async function runStage(p, st, { feedback, humanFeedback, reviewOnly } = {}) {
     if (reviewOnly) { /* keep the delivered work, only redo checking and review */ }
     else if (!feedback) { st.delivered = false; st.round = 0; st.review = null; st.check = null; st.log = []; st.sessionId = null; st.handoff = ''; }
     else if (humanFeedback) st.round = 0;
-    st.stale = false; st.note = '';
+    st.stale = false; st.note = ''; st.quiz = null; st.quizSkipped = false;
     p.stages.slice(p.stages.indexOf(st) + 1).forEach((s) => { if (s.status === 'done' || s.status === 'waiting') s.stale = true; });
     let fb = feedback || null;
     if (feedback) st.lastFeedback = { feedback, humanFeedback: !!humanFeedback };
@@ -396,21 +397,23 @@ ${S.agents.map((a) => rosterLine(a).replace('【可执行：能在用户电脑�
   } finally { projRuns.delete(p.id); save(); renderProject(p); renderList(); }
 }
 
-async function projChat(p, text) {
+async function projChat(p, text, { question } = {}) {
   const lead = agentById(p.leadId);
   p.chat = p.chat || [];
   p.chat.push({ from: 'user', text, ts: Date.now() });
-  await window.claw.proj.append(p.dir, '项目说明.md', `\n\n## 用户补充（${new Date().toLocaleString('zh-CN')}）\n${text}\n`);
+  // a requirement goes into the brief every stage reads; a question about the work does not
+  if (!question) await window.claw.proj.append(p.dir, '项目说明.md', `\n\n## 用户补充（${new Date().toLocaleString('zh-CN')}）\n${text}\n`);
   p.brief = await readBrief(p);
   const msg = { from: lead.id, text: '', ts: Date.now(), pending: true };
   p.chat.push(msg); renderProject(p);
   const status = p.stages.map((s, i) => `${i + 1}. ${s.title}（负责人 ${agentName(s.ownerId)}，审查人 ${agentName(s.reviewerId)}）：${PROJ_STATUS[s.status]}${s.error ? '，错误：' + s.error.slice(0, 200) : ''}${s.note ? '，' + s.note : ''}\n${s.handoff ? '   交接摘要：' + s.handoff.replace(/\s+/g, ' ').slice(0, 600) : ''}${s.review ? '\n   审查：' + s.review.text.replace(/\s+/g, ' ').slice(0, 400) : ''}`).join('\n');
+  const qa = question ? (await inlineInputs(p, question, { forReview: true })).text.slice(0, 40000) : '';
   const hist = p.chat.slice(-12, -1).map((m) => `${m.from === 'user' ? S.userName : agentName(m.from)}：${m.text}`).join('\n');
   const r = await callAgent(lead, leadSys(lead).replace('一个多模型协作团队的主管，负责理解用户意图、拆解任务、给成员写任务单、验收和汇总', '一个科研项目的主管，负责向用户说明进展、回答问题、记录用户的要求'),
-    `======== 项目说明.md（用户刚说的话已经追加在最后，后面的环节都会读到）========\n${p.brief}\n\n======== 各环节的进展 ========\n${status}\n\n======== 你和用户最近的对话 ========\n${hist}\n\n请回复用户最后一句话。要求：如实说明进展，不知道的就说不知道；用户提了新要求时，说明它会影响哪个环节、是否需要重跑（重跑要用户在界面上点，你不能自己启动）；简洁，不要客套。`,
+    (question ? `======== 项目说明.md ========\n${p.brief}\n\n======== 用户在问「${question.title}」环节，相关文件如下 ========${qa}\n\n======== 你和用户最近的对话 ========\n${hist}\n\n用户没看懂这个环节的某处，请讲给他听：用大白话，先说结论再说原因，专业概念用一句话解释，必要时指出看哪个文件的哪一部分。只依据上面的文件，文件里没有的就说没有，不要编。300 字以内。` : `======== 项目说明.md（用户刚说的话已经追加在最后，后面的环节都会读到）========\n${p.brief}\n\n======== 各环节的进展 ========\n${status}\n\n======== 你和用户最近的对话 ========\n${hist}\n\n请回复用户最后一句话。要求：如实说明进展，不知道的就说不知道；用户提了新要求时，说明它会影响哪个环节、是否需要重跑（重跑要用户在界面上点，你不能自己启动）；简洁，不要客套。`),
     { acct: [(p.usage = p.usage || {})], temperature: 0.4, onText: (x) => { msg.text = x; renderProjectSoon(p); } });
   msg.pending = false; msg.text = r.error ? '（出错：' + r.error + '）' : r.text;
-  pact(p, '你', '给主管留言：' + text.replace(/\s+/g, ' ').slice(0, 60));
+  pact(p, '你', (question ? '问主管：' : '给主管留言：') + text.replace(/\s+/g, ' ').slice(0, 60));
   save(); renderProject(p);
 }
 
@@ -472,8 +475,8 @@ function stagePanelHTML(p, st) {
     else if (canRereview(st)) actions = `<button class="btn primary" data-pjact="rereview">▶ 只重新审查（产出保留）</button><button class="btn" data-pjact="reject">写意见让它修改</button><button class="btn" data-pjact="run">从头重做</button>`;
     else if (['error', 'stopped'].includes(st.status) && st.handoff) actions = `<button class="btn primary" data-pjact="reject">写意见让它修改（产出保留）</button><button class="btn" data-pjact="run">从头重做</button>`;
     else if (['pending', 'error', 'stopped'].includes(st.status)) actions = `<button class="btn primary" data-pjact="run">▶ ${st.status === 'pending' ? '开始这个环节' : '重新做这个环节'}</button>`;
-    else if (st.status === 'waiting') actions = `<button class="btn primary" data-pjact="approve">✅ 通过，进入下一环节</button><button class="btn" data-pjact="reject">打回修改</button>`;
-    else if (st.status === 'done') actions = `<button class="btn" data-pjact="reject">打回修改</button><button class="btn" data-pjact="run">从头重做</button>`;
+    else if (st.status === 'waiting') actions = (quizOn(st) && !st.quiz?.passed ? (st.quiz ? '' : `<button class="btn primary" data-pjact="approve">✅ 通过（先答几个问题）</button>`) : `<button class="btn primary" data-pjact="approve">✅ 通过，进入下一环节</button>`) + `<button class="btn" data-pjact="reject">打回修改</button>`;
+    else if (st.status === 'done') actions = `<button class="btn" data-pjact="reject">打回修改</button><button class="btn" data-pjact="run">从头重做</button>${st.quiz ? '' : '<button class="btn" data-pjact="quiz-start">🎓 考考我</button>'}`;
   } else if (mine) actions = `<button class="btn danger" data-pjact="stop">■ 停止</button>`;
   return `<div class="pj-stage" id="proj-stage">
     <div class="pj-shead"><b>${esc(st.title)}</b><span class="badge pjb-${st.status}">${PROJ_STATUS[st.status]}${st.round ? ` · 已修改 ${st.round} 轮` : ''}</span><span class="cb-who">${st.folder}/${st.secs ? ' · ' + st.secs + ' 秒' : ''}${fmtUsage(st.usage) ? ' · ' + fmtUsage(st.usage) : ''}</span></div>
@@ -485,13 +488,15 @@ function stagePanelHTML(p, st) {
     ${st.stale ? '<div class="cb-note warn" style="margin-bottom:8px">上游环节在这之后被修改过，这里的产出可能已经过时，建议重做。</div>' : ''}
     ${st.note && st.status === 'waiting' ? `<div class="cb-note warn" style="margin-bottom:8px">${esc(st.note)}</div>` : ''}
     ${st.error ? `<div class="bubble err" style="margin-bottom:8px;white-space:pre-wrap">${esc(st.error)}</div>` : ''}
-    <div class="row-actions">${actions}<label style="font-size:12.5px;display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--muted)"><input type="checkbox" data-pjf="approval" ${st.approval ? 'checked' : ''} ${editable ? '' : 'disabled'}>做完后要我确认</label></div>
+    ${explainHTML(p, st)}
+    <div class="row-actions">${actions}<label style="font-size:12.5px;display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--muted)"><input type="checkbox" data-pjf="approval" ${st.approval ? 'checked' : ''} ${editable ? '' : 'disabled'}>做完后要我确认</label><label style="font-size:12.5px;display:flex;align-items:center;gap:4px;color:var(--muted)" title="你点通过之前，主管先问你两三个问题，确认你弄懂了"><input type="checkbox" data-pjf="quizOn" ${quizOn(st) ? 'checked' : ''} ${running ? 'disabled' : ''}>通过前考考我</label></div>
+    ${quizHTML(p, st)}
     ${['waiting', 'done', 'error', 'stopped'].includes(st.status) ? `<div class="cb-suprow" style="display:none" id="pj-reject-row"><input class="cb-sup" id="pj-feedback" placeholder="写上要改什么，越具体越好"><button class="btn primary" data-pjact="reject-send">发给负责人修改</button></div>` : ''}
     <details ${editable ? 'open' : ''} data-key="task"><summary>任务说明${editable ? '（开工前可以修改）' : ''}</summary>${editable ? `<textarea data-pjf="task" class="pj-task">${esc(st.task)}</textarea>` : `<div class="cb-out">${md(st.task)}</div>`}</details>
     ${st.live ? `<details open data-key="live"><summary>正在写…</summary><div class="cb-out">${md(st.live)}</div></details>` : ''}
     ${imgs.length ? `<div class="cb-sec">产出的图</div><div class="wc-imgs">${imgs.map((f) => `<img src="${f.img}" title="${esc(f.rel)}" data-wopen="${esc(f.path)}">`).join('')}</div>` : ''}
     ${files.length ? `<div class="cb-sec">文件夹里的文件</div><div class="wc-files">${files.map((f) => `<div><span class="fname" data-wopen="${esc(f.path)}">📄 ${esc(f.rel)}</span><span class="desc">${fmtSize(f.size)}</span><span class="link" data-wreveal="${esc(f.path)}">在文件夹中显示</span></div>`).join('')}</div>` : ''}
-    ${st.handoff ? `<details open data-key="handoff"><summary>交接（${esc(agentName(st.ownerId))} 写的）</summary><div class="cb-out">${md(st.handoff)}</div></details>` : ''}
+    ${st.handoff ? `<details ${mdSection(st.handoff, '讲给你听') ? '' : 'open'} data-key="handoff"><summary>交接（${esc(agentName(st.ownerId))} 写的）</summary><div class="cb-out">${md(st.handoff)}</div></details>` : ''}
     ${st.review ? `<details open data-key="review"><summary>审查（${st.review.auto ? '程序自动比对' : esc(agentName(st.review.by))}）：${st.review.pass ? '✅ 通过' : '❌ 需要修改'}</summary><div class="cb-out">${md(st.review.text)}</div></details>` : ''}
     ${st.log?.length ? `<details ${mine ? 'open' : ''} data-key="log"><summary>执行过程（${st.log.length} 条）</summary><div class="wc-log" id="pj-log">${st.log.map((e) => `<div class="l-${e.kind}">${esc(e.text)}${e.detail ? `<pre>${esc(e.detail)}</pre>` : ''}</div>`).join('')}</div></details>` : ''}
   </div>`;
@@ -509,6 +514,7 @@ function renderProject(p, soft) {
   projSel.sid = st.id;
   const strip = p.stages.map((s, i) => `<div class="pj-chip ${s.id === st.id ? 'on' : ''} pjs-${s.status}" data-pjstage="${s.id}"><div class="n">${i + 1}</div><div><b>${esc(s.title)}</b><span>${esc(agentName(s.ownerId))} · ${PROJ_STATUS[s.status]}${s.stale ? ' · ⚠ 上游改过' : ''}</span></div></div>${i < p.stages.length - 1 ? '<div class="pj-arrow">→</div>' : ''}`).join('');
   const allDone = p.stages.every((s) => s.status === 'done');
+  if (soft && $('#proj-stage') && document.activeElement?.closest?.('#proj-stage textarea, #proj-stage input')) { $('#proj-strip').innerHTML = strip; $('#proj-activity').innerHTML = activityHTML(p); $('#proj-chat').innerHTML = chatHTML(p); return; }
   if (soft && $('#proj-stage')) {
     // refresh in place while agents work: keep scroll, open sections and anything being typed
     const el = $('#proj-stage'); const open = new Set([...el.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key)); const closed = new Set([...el.querySelectorAll('details:not([open])[data-key]')].map((d) => d.dataset.key));
@@ -522,7 +528,7 @@ function renderProject(p, soft) {
   const chatVal = $('#pj-chat-input')?.value || '';
   main.innerHTML = `<div class="page pj-page">
     <div class="pj-head"><div><h2>🧪 ${esc(p.name)}</h2><div class="desc" style="margin:0"><span class="link" data-pjact="open">📁 ${esc(p.dir)}</span>${fmtUsage(p.usage) ? ' · 累计 ' + fmtUsage(p.usage) : ''}</div></div>
-      <div class="row-actions">${running ? '<button class="btn danger" data-pjact="stop">■ 停止</button>' : allDone ? '<span class="badge pjb-done">全部完成</span>' : '<button class="btn primary" data-pjact="runall">▶ 按顺序往下做</button>'}<button class="btn" data-pjact="brief">项目说明</button><button class="btn danger" data-pjact="delete">删除</button></div></div>
+      <div class="row-actions">${running ? '<button class="btn danger" data-pjact="stop">■ 停止</button>' : allDone ? '<span class="badge pjb-done">全部完成</span>' : '<button class="btn primary" data-pjact="runall">▶ 按顺序往下做</button>'}<button class="btn" data-pjact="brief">项目说明</button><button class="btn" data-pjact="decisions">决策记录</button><button class="btn danger" data-pjact="delete">删除</button></div></div>
     ${p.questions ? `<div class="cb-note warn" style="margin:10px 0"><b>主管想先向你确认：</b>\n${esc(p.questions)}\n<div class="cb-suprow"><input class="cb-sup" id="pj-answer" placeholder="在这里回答，主管会据此重新起草"><button class="btn" data-pjact="answer">回答并重新起草</button><button class="btn" data-pjact="noanswer">不用了，就这样</button></div></div>` : ''}
     <div class="pj-strip" id="proj-strip">${strip}</div>
     <div class="pj-cols"><div class="pj-left">${stagePanelHTML(p, st)}</div>
@@ -568,7 +574,8 @@ async function projectAction(act, t) {
   }
   if (act === 'rereview') return runStage(p, st, { reviewOnly: true });
   if (act === 'refix' && st.lastFeedback) return runStage(p, st, st.lastFeedback);
-  if (act === 'approve') { st.status = 'done'; st.note = ''; pact(p, '你', `确认通过了「${st.title}」`); await syncPlan(p); save(); renderProject(p); }
+  if (act === 'approve') { if (quizOn(st) && !st.quiz?.passed && !st.quizSkipped) { if (!st.quiz?.qs?.length) await quizStart(p, st); return; } return approveStage(p, st); }
+  if (['quiz-start', 'quiz-submit', 'quiz-skip', 'ask', 'decisions'].includes(act)) return understandAction(act, p, st);
   if (act === 'reject') { const row = $('#pj-reject-row'); if (row) { row.style.display = 'flex'; $('#pj-feedback').focus(); } }
   if (act === 'reject-send') { const v = $('#pj-feedback').value.trim(); if (!v) return toast('写上要改什么'); pact(p, '你', `打回了「${st.title}」：${v.slice(0, 60)}`); await runStage(p, st, { feedback: `（来自用户「${S.userName}」的意见，优先级最高）\n${v}`, humanFeedback: true }); }
 }

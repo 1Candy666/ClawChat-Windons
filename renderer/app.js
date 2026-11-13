@@ -1140,6 +1140,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
+  if (t.dataset.pjqa !== undefined) { const pj = projById(projSel.pid), st = pj && stageOf(pj, projSel.sid); if (st?.quiz?.answers) { st.quiz.answers[+t.dataset.pjqa] = t.value; save(); } return; }
   if (t.dataset.pjf === 'task') { const pj = projById(projSel.pid), st = pj && stageOf(pj, projSel.sid); if (st) { st.task = t.value; save(); } return; }
   if (t.id === 'search') { filter = t.value; if (view === 'tasks') renderTasksPage(); else renderList(); return; }
   const agent = agentById(activeAgentId);

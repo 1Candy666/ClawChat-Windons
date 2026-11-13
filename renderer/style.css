@@ -274,3 +274,9 @@ body.dropping .messages { outline: 3px dashed var(--accent); outline-offset: -10
 .qm-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
 .qm-item:hover { background: rgba(0,0,0,.05); } .qm-item.on { background: rgba(217,119,87,.12); }
 .qm-item span { color: var(--muted, #8a8178); font-size: 12px; white-space: nowrap; }
+.pj-quiz { border: 1px solid rgba(217,119,87,.35); background: #fffaf6; border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+.pj-qhead { font-weight: 600; margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
+.pj-q { margin: 10px 0; } .pj-qq { font-weight: 500; margin-bottom: 5px; line-height: 1.6; }
+.pj-q textarea { width: 100%; box-sizing: border-box; min-height: 54px; border: 1px solid var(--line, #e5e0d8); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; resize: vertical; }
+.pj-qa-done { font-size: 13px; color: var(--muted, #8a8178); padding: 4px 0; white-space: pre-wrap; }
+.pj-explain > summary { font-weight: 600; } .pj-explain .cb-out { background: #f8fbf6; }
