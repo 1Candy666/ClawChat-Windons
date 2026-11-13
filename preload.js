@@ -36,6 +36,14 @@ contextBridge.exposeInMainWorld('claw', {
   },
   attSave: (name, data) => ipcRenderer.invoke('att:save', { name, data }),
   attOpen: (p) => ipcRenderer.invoke('att:open', p),
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
+    import: (kind) => ipcRenderer.invoke('skills:import', kind),
+    importPath: (p) => ipcRenderer.invoke('skills:importPath', p),
+    remove: (name) => ipcRenderer.invoke('skills:remove', name),
+    read: (name) => ipcRenderer.invoke('skills:read', name),
+    copyInto: (names, dir) => ipcRenderer.invoke('skills:copyInto', { names, dir }),
+  },
   proj: {
     scan: (paths) => ipcRenderer.invoke('proj:scan', paths),
     mkdirs: (dir, rels) => ipcRenderer.invoke('proj:mkdirs', { dir, rels }),

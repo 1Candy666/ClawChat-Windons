@@ -524,5 +524,6 @@ require('./work').register();
 require('./attach').register();
 require('./pachat').register();
 require('./project').register();
+require('./skills').register();
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

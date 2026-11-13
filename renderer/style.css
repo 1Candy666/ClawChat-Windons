@@ -285,3 +285,13 @@ body.dropping .messages { outline: 3px dashed var(--accent); outline-offset: -10
 .pj-fu-row { display: flex; gap: 6px; align-items: center; margin: 6px 0 0 14px; }
 .pj-fu-row input { flex: 1; border: 1px solid var(--line, #e5e0d8); border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 13px; }
 .pj-fu-row .link { font-size: 12.5px; white-space: nowrap; }
+.sk-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line, #eee8df); }
+.sk-row .desc { font-size: 12px; margin: 2px 0 0; } .sk-meta { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.sk-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sk-chip { border: 1px solid var(--line, #e5e0d8); border-radius: 999px; padding: 3px 11px; font-size: 12.5px; cursor: pointer; user-select: none; }
+.sk-chip.on { background: rgba(217,119,87,.14); border-color: rgba(217,119,87,.5); } .sk-chip.ro { cursor: default; opacity: .85; } .sk-chip.miss { color: var(--danger, #c0392b); cursor: default; }
+.sk-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line, #eee8df); }
+.sk-row .desc { font-size: 12px; margin: 2px 0 0; } .sk-meta { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.sk-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sk-chip { border: 1px solid var(--line, #e5e0d8); border-radius: 999px; padding: 3px 11px; font-size: 12.5px; cursor: pointer; user-select: none; }
+.sk-chip.on { background: rgba(217,119,87,.14); border-color: rgba(217,119,87,.5); } .sk-chip.ro { cursor: default; opacity: .85; } .sk-chip.miss { color: var(--danger, #c0392b); cursor: default; }

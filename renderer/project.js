@@ -122,7 +122,8 @@ async function runOwner(p, st, run, feedback) {
   st.usage = st.usage || {}; p.usage = p.usage || {};
   let finalText = '';
   if (isDoer(a)) {
-    const job = (sessionId) => projWorkJob(run, a, { dir: p.dir, level: a.work?.level === 'full' ? 'full' : 'write', sessionId, prompt: ownerPromptDoer(p, st, sessionId ? feedback : null) + (feedback && !sessionId ? `\n\n（注意：这是在修改已有的产出。修改意见如下，请先读 ${st.folder}/ 里现有的文件再改。）\n${feedback}` : ''),
+    const skb = await skillBlock(p, st, { doer: true });
+    const job = (sessionId) => projWorkJob(run, a, { dir: p.dir, level: a.work?.level === 'full' ? 'full' : 'write', sessionId, prompt: ownerPromptDoer(p, st, sessionId ? feedback : null) + skb + (feedback && !sessionId ? `\n\n（注意：这是在修改已有的产出。修改意见如下，请先读 ${st.folder}/ 里现有的文件再改。）\n${feedback}` : ''),
       rawLog: `${p.dir}/.clawchat/logs/${st.folder}_负责人.log`, onLog: (e) => { st.log.push(e); if (st.log.length > 400) st.log.shift(); renderProjectSoon(p); } });
     let r = await job(feedback ? st.sessionId : null);
     if (r.error && feedback && st.sessionId && !r.aborted && !run.stop) { st.log.push({ kind: 'warn', text: '接不上之前的会话，改为新开一个会话来修改' }); st.sessionId = null; r = await job(null); }
@@ -136,7 +137,7 @@ async function runOwner(p, st, run, feedback) {
     const brief = await readBrief(p);
     const inp = await inlineInputs(p, st);
     const prevOut = feedback ? await window.claw.proj.read(p.dir, st.folder + '/' + st.output, 40000) : null;
-    const sys = `你是「${a.name}」。${a.persona || ''}\n\n你在一个科研项目的流水线里工作，负责「${st.title}」环节。你不能直接读写文件：需要的文件内容会贴给你，你的产出由系统保存成文件。`;
+    const sys = `你是「${a.name}」。${a.persona || ''}\n\n你在一个科研项目的流水线里工作，负责「${st.title}」环节。你不能直接读写文件：需要的文件内容会贴给你，你的产出由系统保存成文件。` + await skillBlock(p, st);
     const user = `${stageContextNote(p, st)}
 
 ======== 项目说明.md ========
@@ -213,7 +214,7 @@ async function runReviewer(p, st, run) {
 先读：项目说明.md、${st.folder}/任务.md、${st.folder}/交接.md，以及 ${st.folder}/ 里的产出文件和它用到的上游文件。${st.check?.ok ? `\n程序已经把产出和参考结果逐格比对过，结果在 ${st.folder}/比对结果.md（一致）。数值是否等于参考结果不用你再查，你重点看：方法是否合理、是不是真的从原始数据算出来的（而不是照抄参考文件）、交接写得是否属实。` : ''}
 你处于只读模式：可以读文件、可以运行不写文件的命令来核对数字（例如用 Python 读 CSV 重新算一遍），但不能修改任何文件。
 
-${REVIEW_RULES}`;
+${REVIEW_RULES}${await skillBlock(p, st, { doer: true, reviewer: true })}`;
     const r = await projWorkJob(run, a, { dir: p.dir, level: 'read', prompt, rawLog: `${p.dir}/.clawchat/logs/${st.folder}_审查人.log`, onLog: (e) => { st.log.push({ ...e, text: '[审查] ' + e.text }); if (st.log.length > 400) st.log.shift(); renderProjectSoon(p); } });
     addUsage(st.usage, r.usage); addUsage(p.usage, r.usage);
     if (run.stop) throw new CollabStop();
@@ -222,7 +223,7 @@ ${REVIEW_RULES}`;
   } else {
     const brief = await readBrief(p);
     const inp = await inlineInputs(p, st, { forReview: true });
-    const sys = `你是「${a.name}」。${a.persona || ''}\n\n你在一个科研项目里担任「${st.title}」环节的审查人。你不能直接读文件，相关文件的内容会贴给你${inp.atts.length ? '，图片也附上了' : ''}。`;
+    const sys = `你是「${a.name}」。${a.persona || ''}\n\n你在一个科研项目里担任「${st.title}」环节的审查人。你不能直接读文件，相关文件的内容会贴给你${inp.atts.length ? '，图片也附上了' : ''}。` + await skillBlock(p, st, { reviewer: true });
     const user = `负责人是「${agentName(st.ownerId)}」。你的任务是独立检查它的产出，不是替它重做。
 
 ======== 项目说明.md ========
@@ -440,7 +441,7 @@ function newProjectModal() {
       if (!name) return err('起个名字'); if (!goal) return err('说说想做成什么'); if (!dir) return err('选一个项目文件夹');
       if (!(await window.claw.proj.isEmpty(dir))) return err('这个文件夹里已经有东西了。请选一个空文件夹，避免和现有文件混在一起。');
       const p = { id: uid('pj'), name, goal, inputs, dir, leadId: $('#np-lead', m).value, status: 'drafting', chat: [], activity: [], usage: {}, answers: [], ts: Date.now(),
-        stages: PROJ_TEMPLATE.map((t) => ({ ...t, id: uid('st'), status: 'pending', ownerId: '', reviewerId: '', log: [], files: [] })) };
+        stages: PROJ_TEMPLATE.map((t) => ({ ...t, id: uid('st'), status: 'pending', ownerId: '', reviewerId: '', log: [], files: [], skills: defaultStageSkills(t.key) })) };
       S.projects = S.projects || []; S.projects.push(p);
       projSel = { pid: p.id, sid: p.stages[0].id };
       close(); view = 'projects'; renderAll();
@@ -484,6 +485,7 @@ function stagePanelHTML(p, st) {
       <div class="field"><label>审查人（独立检查负责人的产出）</label><select data-pjf="reviewerId" ${editable ? '' : 'disabled'}><option value="">不审查</option>${opt(st.reviewerId, () => true)}</select></div></div>
     <div class="grid2"><div class="field"><label>参考结果文件（可不填；填了就由程序逐格比对，不靠模型判断）</label><input data-pjf="refFile" value="${esc(st.refFile || '')}" placeholder="例如 F:\\…\\expected\\指标对比.csv" ${editable ? '' : 'disabled'}></div>
       <div class="field"><label>要比对的产出文件名（留空 = 和参考文件同名）</label><input data-pjf="refOut" value="${esc(st.refOut || '')}" ${editable ? '' : 'disabled'}></div></div>
+    ${stageSkillsHTML(st, !running && !['running', 'review', 'revising'].includes(st.status))}
     ${st.check ? `<div class="cb-note ${st.check.ok ? 'okbox' : 'warn'}" style="margin-bottom:8px"><b>${st.check.ok ? '✅ 和参考结果一致' : '❌ 和参考结果不一致'}</b>（程序逐格比对${st.check.compared ? `，共 ${st.check.compared} 个单元格，最大相对差 ${Number(st.check.maxRel || 0).toExponential(1)}` : ''}）${st.check.error ? '\n' + esc(st.check.error) : ''}${st.check.problems?.length ? '\n' + st.check.problems.slice(0, 8).map(esc).join('\n') + (st.check.problems.length > 8 ? `\n…共 ${st.check.problems.length} 处，详见 比对结果.md` : '') : ''}</div>` : ''}
     ${st.stale ? '<div class="cb-note warn" style="margin-bottom:8px">上游环节在这之后被修改过，这里的产出可能已经过时，建议重做。</div>' : ''}
     ${st.note && st.status === 'waiting' ? `<div class="cb-note warn" style="margin-bottom:8px">${esc(st.note)}</div>` : ''}

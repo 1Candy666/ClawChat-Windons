@@ -776,6 +776,7 @@ function renderSettings() {
       <div class="presets">${PRESETS.map((p, i) => `<button class="btn" data-preset="${i}">＋ ${esc(p.name)}</button>`).join('')}<button class="btn" data-preset="-1">＋ 自定义</button></div>
       <div id="prov-list">${S.providers.map(providerCardHTML).join('') || '<div class="desc">还没有添加任何服务。</div>'}</div>
     </div>
+    ${skillsCardHTML()}
     <div class="card"><h3>数据</h3><div class="row-actions">
       <button class="btn" id="s-open">打开数据文件夹</button>
       <button class="btn" id="s-export">导出备份</button>
@@ -944,7 +945,7 @@ function addAgentModal(p) {
 document.addEventListener('click', async (e) => {
   const qm = e.target.closest('[data-qmodel]');
   if (qm) { const card = qm.closest('[data-pcard]'); const p = providerById(card.dataset.pcard); if (p) { p.model = qm.dataset.qmodel; save(); renderSettings(); toast(`模型已改为 ${p.model}`); } return; }
-  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],[data-proj],[data-pjstage],[data-pjact],button');
+  const t = e.target.closest('[data-view],[data-chat],[data-agent],[data-provider],[data-mention],[data-act],[data-emoji],[data-mark],[data-color],[data-preset],[data-clipreset],[data-musepreset],[data-pact],[data-addmodel],[data-wact],[data-wopen],[data-wreveal],[data-attopen],[data-attdel],[data-cact],[data-tfilter],[data-tjump],[data-proj],[data-pjstage],[data-pjact],[data-skact],[data-pjskill],button');
   if (!t) return;
 
   if (t.dataset.wopen) { window.claw.work.open(t.dataset.wopen); return; }
@@ -952,6 +953,8 @@ document.addEventListener('click', async (e) => {
   if (t.dataset.proj) { projSel = { pid: t.dataset.proj, sid: null }; renderList(); renderProjectsPage(); return; }
   if (t.dataset.pjstage) { projSel.sid = t.dataset.pjstage; const pj = projById(projSel.pid); if (pj) renderProject(pj); return; }
   if (t.dataset.pjact) { projectAction(t.dataset.pjact, t); return; }
+  if (t.dataset.skact) { skillsAction(t.dataset.skact, t); return; }
+  if (t.dataset.pjskill) { const pj = projById(projSel.pid), st = pj && stageOf(pj, projSel.sid); if (st && !projRuns.has(pj.id)) { const n = t.dataset.pjskill; st.skills = (st.skills || []).includes(n) ? st.skills.filter((x) => x !== n) : [...(st.skills || []), n]; save(); renderProject(pj); } return; }
   if (t.dataset.tfilter) { taskFilter = t.dataset.tfilter; renderList(); renderTasksPage(); return; }
   if (t.dataset.tjump) { const [c, mid] = t.dataset.tjump.split('|'); jumpToTask(c, mid); return; }
   if (t.id === 'pa-pair' || t.id === 'pa-off') { const ag = agentById(activeAgentId); if (ag) pachatCardAction(t.id, ag); return; }
@@ -1238,5 +1241,6 @@ document.addEventListener('paste', (e) => {
   if (S.providers.some((p) => p.keyLost)) setTimeout(() => toast('有 API Key 解密失败（可能换了电脑或系统账号），请到「设置」里重新填写', 7000), 600);
   if (!S.providers.length) { view = 'settings'; setTimeout(() => toast('先添加一个模型服务（推荐 DeepSeek），填好 API Key 就能聊了', 5000), 400); }
   save();
+  await refreshSkills();
   renderAll();
 })();
