@@ -555,7 +555,7 @@ function renderList() {
       <div class="sub">${esc((a.persona || '').slice(0, 40))}</div></div></div>`).join('');
   } else {
     body.innerHTML = `<div class="section-label">模型服务</div>` + (S.providers.map((p) => `<div class="item" data-provider="${p.id}">
-      <div class="av sm" style="background:#efe9df">🔌</div><div class="meta"><div class="title"><span>${esc(p.name)}</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</div>
+      <div class="av sm" style="background:#e3e8ea">🔌</div><div class="meta"><div class="title"><span>${esc(p.name)}</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</div>
       <div class="sub">${esc(p.model || (isMuse(p) ? "网页会员额度" : isCli(p) ? "订阅额度 · 默认模型" : ""))}</div></div></div>`).join('') || '<div class="section-label">还没有添加</div>');
   }
 }
@@ -791,14 +791,14 @@ function providerCardHTML(p) {
   if (isMuse(p)) return museCardHTML(p);
   if (isCli(p)) return cliCardHTML(p);
   const preset = PRESETS.find((x) => x.baseUrl === p.baseUrl);
-  return `<div class="card" data-pcard="${p.id}" style="background:#fdfcfa">
+  return `<div class="card" data-pcard="${p.id}" style="background:#fafbfb">
     <h3>🔌 <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:180px">
       ${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
     <div class="grid2">
       <div class="field"><label>接口地址 Base URL</label><input data-pf="baseUrl" value="${esc(p.baseUrl)}"></div>
       <div class="field"><label>默认模型</label><input data-pf="model" value="${esc(p.model)}" list="ml-${p.id}" placeholder="先填 Key，再点「获取模型列表」选择"><datalist id="ml-${p.id}">${(p.models || []).map((m) => `<option value="${esc(m)}">`).join('')}</datalist></div>
     </div>
-    <div class="field"><label>API Key ${preset?.keyUrl ? `· <a href="${preset.keyUrl}" target="_blank" style="color:#c4620a">去申请</a>` : ''}</label>
+    <div class="field"><label>API Key ${preset?.keyUrl ? `· <a href="${preset.keyUrl}" target="_blank" style="color:var(--accent)">去申请</a>` : ''}</label>
       <input data-pf="apiKey" type="password" value="${esc(p.apiKey)}" placeholder="sk-..."></div>
     <div class="grid2">
       <div class="field"><label>输入价格（元 / 百万 tokens，可不填）</label><input data-pf="priceIn" value="${esc(p.priceIn || '')}" placeholder="填了才会显示花费"></div>
@@ -831,7 +831,7 @@ function cliCardHTML(p) {
     : qoder ? '调用本机 <code>qodercli</code>，用你在 Qoder 里登录的账号，按 credits 计费。能看图。需要先安装（npm i -g @qoder-ai/qodercli）并运行 qodercli login。'
     : '调用本机 <code>claude -p</code>，用你在 Claude Code 里登录的账号。需要先安装 Claude Code 并登录。';
   const prog = codex ? 'Codex' : qoder ? 'Qoder' : 'Claude Code';
-  return `<div class="card" data-pcard="${p.id}" style="background:#fdfcfa">
+  return `<div class="card" data-pcard="${p.id}" style="background:#fafbfb">
     <h3>${codex ? '🟢' : '🟠'} <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:220px">
       <span class="badge">订阅额度</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
     <div class="desc" style="margin:-4px 0 12px;font-size:12px">${desc}</div>
@@ -854,7 +854,7 @@ function cliCardHTML(p) {
 }
 
 function museCardHTML(p) {
-  return `<div class="card" data-pcard="${p.id}" style="background:#fdfcfa">
+  return `<div class="card" data-pcard="${p.id}" style="background:#fafbfb">
     <h3>🔵 <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:220px">
       <span class="badge">会员额度 · 实验性</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
     <div class="desc" style="margin:-4px 0 12px;font-size:12px;line-height:1.7">

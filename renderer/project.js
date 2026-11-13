@@ -529,7 +529,7 @@ function renderProject(p, soft) {
   }
   const chatVal = $('#pj-chat-input')?.value || '';
   main.innerHTML = `<div class="page pj-page">
-    <div class="pj-head"><div><h2>🧪 ${esc(p.name)}</h2><div class="desc" style="margin:0"><span class="link" data-pjact="open">📁 ${esc(p.dir)}</span>${fmtUsage(p.usage) ? ' · 累计 ' + fmtUsage(p.usage) : ''}</div></div>
+    <div class="pj-head"><div><h2>🧪 ${esc(p.name)}</h2><div class="pj-meta"><span class="link" data-pjact="open" title="在资源管理器中打开">📁 ${esc(p.dir)}</span>${fmtUsage(p.usage) ? `<span>累计 ${fmtUsage(p.usage)}</span>` : ''}</div></div>
       <div class="row-actions">${running ? '<button class="btn danger" data-pjact="stop">■ 停止</button>' : allDone ? '<span class="badge pjb-done">全部完成</span>' : '<button class="btn primary" data-pjact="runall">▶ 按顺序往下做</button>'}${p.exporting ? `<span class="badge">📊 ${esc(p.exporting)}</span>` : '<button class="btn" data-pjact="report">📊 组会汇报</button>'}<button class="btn" data-pjact="brief">项目说明</button><button class="btn" data-pjact="decisions">决策记录</button><button class="btn danger" data-pjact="delete">删除</button></div></div>
     ${p.questions ? `<div class="cb-note warn" style="margin:10px 0"><b>主管想先向你确认：</b>\n${esc(p.questions)}\n<div class="cb-suprow"><input class="cb-sup" id="pj-answer" placeholder="在这里回答，主管会据此重新起草"><button class="btn" data-pjact="answer">回答并重新起草</button><button class="btn" data-pjact="noanswer">不用了，就这样</button></div></div>` : ''}
     <div class="pj-strip" id="proj-strip">${strip}</div>

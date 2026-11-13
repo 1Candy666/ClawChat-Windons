@@ -129,7 +129,7 @@ function pachatCardHTML(a) {
   let body;
   if (!pc?.token) {
     body = `<div class="desc" style="margin:-4px 0 12px;font-size:12.5px;line-height:1.75">
-        让这个联系人作为一个智能体加入你的 <a href="https://pachat.ai" target="_blank" style="color:#c4620a">Pachat</a> 群。之后你在手机上打开 Pachat 发消息或 @ 它，这台电脑上的 ClawChat 会收到，用它的模型回复。<br>
+        让这个联系人作为一个智能体加入你的 <a href="https://pachat.ai" target="_blank" style="color:var(--accent)">Pachat</a> 群。之后你在手机上打开 Pachat 发消息或 @ 它，这台电脑上的 ClawChat 会收到，用它的模型回复。<br>
         步骤：在 pachat.ai 登录 → 点「接入 agent」→「复制」，把那段话里的<b>配对码</b>（形如 7KQ2-LMZ9）填到下面。<br>
         ⚠️ 需要知道：群里的消息会经过 Pachat 的服务器；ClawChat 必须开着才会回复；远程只能聊天，不能让它在电脑上干活。</div>
       ${pc?.lost ? '<div class="cb-warn" style="margin-bottom:8px">之前的连接凭证解不开了，需要重新配对。</div>' : ''}

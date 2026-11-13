@@ -70,11 +70,14 @@
 
 ## 下载使用
 
-到 [Releases](../../releases) 下载 `ClawChat-Win.zip`，解压后双击 `ClawChat.exe`。
+1. 到 [Releases](https://github.com/1Candy666/ClawChat-Windons/releases) 下载最新的 `ClawChat-Win.zip`；
+2. 右键 →「全部解压缩」，进入文件夹双击 `ClawChat.exe`（如提示"Windows 已保护你的电脑"，点「更多信息」→「仍要运行」）；
+3. 在「设置 → 模型服务」接入至少一个模型：有 ChatGPT 会员就接 Codex，或者填一个 DeepSeek 的 API Key；
+4. 到「项目」里新建项目，选主管，让它起草计划，再点「按顺序往下做」。
 
-首次运行会进入「设置」：添加一个模型服务（推荐先用 DeepSeek，便宜），填 API Key → 「测试连接」出现 ✅ 即可开聊。
+**完整的图文步骤见 [使用指南.md](使用指南.md)**，包括每种模型怎么接、项目怎么跑、理解关卡、组会汇报、技能库和常见问题。
 
-API Key 用系统加密（Windows DPAPI）保存，只有本机当前账号能解开。所有聊天记录、设置和 API Key **只保存在你本机**：`%APPDATA%\ClawChat\clawchat-data.json`。
+所有聊天记录、设置和 API Key **只保存在你本机** `%APPDATA%\ClawChat\`，API Key 用系统加密（Windows DPAPI）保存。
 
 ## 从源码运行 / 打包
 
