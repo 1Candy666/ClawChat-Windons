@@ -148,7 +148,7 @@ ${feedback ? `\n\n################ 你上一版的产出（${st.output}）######
 =====交接=====
 ${HANDOFF_FMT}`;
     st.live = '';
-    const r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: Math.min(a.temperature ?? 0.5, 0.6), onText: (x) => { st.live = x; renderProjectSoon(p); }, onReasoning: (x) => { st.reasoning = x; } });
+    const r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: Math.min(a.temperature ?? 0.5, 0.6), onText: (x) => { st.live = x; renderProjectSoon(p); }, onReasoning: (x) => { st.reasoning = x; } , onRetry: (n, err) => { st.log.push({ kind: 'warn', text: `${a.name} 连接断了（${String(err).slice(0, 60)}），第 ${n} 次重试` }); renderProjectSoon(p); } });
     delete st.live;
     if (run.stop) throw new CollabStop();
     if (r.error || !r.text) throw new Error(`${a.name} 出错：${r.error || '没有返回内容'}`);
@@ -225,13 +225,8 @@ ${inp.text}
 
 ${REVIEW_RULES}
 - 你只能看到贴出来的内容。没法核实的地方（比如看不到的原始数据、没贴出来的大文件），要明确写"无法核实"，不要当作已通过。`;
-    let r;
-    for (let n = 0; n < 3; n++) {
-      r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: 0.2 });
-      if (run.stop) throw new CollabStop();
-      if (!r.error && r.text) break;
-      if (n < 2) { st.log.push({ kind: 'info', text: `[审查] ${a.name} 没连上（${String(r.error || '没有返回内容').slice(0, 80)}），${(n + 1) * 5} 秒后重试` }); renderProjectSoon(p); await new Promise((ok) => setTimeout(ok, (n + 1) * 5000)); if (run.stop) throw new CollabStop(); }
-    }
+    const r = await callAgent(a, sys, user, { run, acct: [st.usage, p.usage], attachments: inp.atts, temperature: 0.2, onRetry: (n, err) => { st.log.push({ kind: 'warn', text: `[审查] ${a.name} 连接断了（${String(err).slice(0, 60)}），第 ${n} 次重试` }); renderProjectSoon(p); } });
+    if (run.stop) throw new CollabStop();
     if (r.error || !r.text) throw new Error(`审查人 ${a.name} 出错：${r.error || '没有返回内容'}`);
     text = r.text;
   }
@@ -258,6 +253,7 @@ async function runStage(p, st, { feedback, humanFeedback, reviewOnly } = {}) {
     st.stale = false; st.note = '';
     p.stages.slice(p.stages.indexOf(st) + 1).forEach((s) => { if (s.status === 'done' || s.status === 'waiting') s.stale = true; });
     let fb = feedback || null;
+    if (feedback) st.lastFeedback = { feedback, humanFeedback: !!humanFeedback };
     for (;;) {
       if (reviewOnly) { reviewOnly = false; pact(p, '系统', `「${st.title}」的产出保留，只重新审查`); }
       else {
@@ -284,6 +280,7 @@ async function runStage(p, st, { feedback, humanFeedback, reviewOnly } = {}) {
       if ((st.round || 0) >= PROJ_MAX_ROUNDS) { st.note = `审查了 ${PROJ_MAX_ROUNDS + 1} 次仍未通过，需要你来决定：通过，或者写上意见打回。`; break; }
       st.round = (st.round || 0) + 1; fb = rv.text; humanFeedback = false;
     }
+    st.lastFeedback = null;
     st.files = await window.claw.proj.files(p.dir, st.folder);
     if (!st.review.pass || st.approval) { st.status = 'waiting'; if (st.review.pass) st.note = '审查已通过。这个环节需要你确认后才算完成。'; pact(p, '系统', `「${st.title}」等你确认`); }
     else { st.status = 'done'; st.note = ''; }
@@ -466,7 +463,9 @@ function stagePanelHTML(p, st) {
   const files = (st.files || []).filter((f) => !['任务.md'].includes(f.rel));
   let actions = '';
   if (!running) {
-    if (canRereview(st)) actions = `<button class="btn primary" data-pjact="rereview">▶ 只重新审查（产出保留）</button><button class="btn" data-pjact="run">从头重做</button>`;
+    if (['error', 'stopped'].includes(st.status) && st.lastFeedback) actions = `<button class="btn primary" data-pjact="refix">▶ 重试：继续按意见修改</button><button class="btn" data-pjact="reject">换一条意见</button><button class="btn" data-pjact="run">从头重做</button>`;
+    else if (canRereview(st)) actions = `<button class="btn primary" data-pjact="rereview">▶ 只重新审查（产出保留）</button><button class="btn" data-pjact="reject">写意见让它修改</button><button class="btn" data-pjact="run">从头重做</button>`;
+    else if (['error', 'stopped'].includes(st.status) && st.handoff) actions = `<button class="btn primary" data-pjact="reject">写意见让它修改（产出保留）</button><button class="btn" data-pjact="run">从头重做</button>`;
     else if (['pending', 'error', 'stopped'].includes(st.status)) actions = `<button class="btn primary" data-pjact="run">▶ ${st.status === 'pending' ? '开始这个环节' : '重新做这个环节'}</button>`;
     else if (st.status === 'waiting') actions = `<button class="btn primary" data-pjact="approve">✅ 通过，进入下一环节</button><button class="btn" data-pjact="reject">打回修改</button>`;
     else if (st.status === 'done') actions = `<button class="btn" data-pjact="reject">打回修改</button><button class="btn" data-pjact="run">从头重做</button>`;
@@ -482,7 +481,7 @@ function stagePanelHTML(p, st) {
     ${st.note && st.status === 'waiting' ? `<div class="cb-note warn" style="margin-bottom:8px">${esc(st.note)}</div>` : ''}
     ${st.error ? `<div class="bubble err" style="margin-bottom:8px;white-space:pre-wrap">${esc(st.error)}</div>` : ''}
     <div class="row-actions">${actions}<label style="font-size:12.5px;display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--muted)"><input type="checkbox" data-pjf="approval" ${st.approval ? 'checked' : ''} ${editable ? '' : 'disabled'}>做完后要我确认</label></div>
-    ${st.status === 'waiting' || st.status === 'done' ? `<div class="cb-suprow" style="display:none" id="pj-reject-row"><input class="cb-sup" id="pj-feedback" placeholder="写上要改什么，越具体越好"><button class="btn primary" data-pjact="reject-send">发给负责人修改</button></div>` : ''}
+    ${['waiting', 'done', 'error', 'stopped'].includes(st.status) ? `<div class="cb-suprow" style="display:none" id="pj-reject-row"><input class="cb-sup" id="pj-feedback" placeholder="写上要改什么，越具体越好"><button class="btn primary" data-pjact="reject-send">发给负责人修改</button></div>` : ''}
     <details ${editable ? 'open' : ''} data-key="task"><summary>任务说明${editable ? '（开工前可以修改）' : ''}</summary>${editable ? `<textarea data-pjf="task" class="pj-task">${esc(st.task)}</textarea>` : `<div class="cb-out">${md(st.task)}</div>`}</details>
     ${st.live ? `<details open data-key="live"><summary>正在写…</summary><div class="cb-out">${md(st.live)}</div></details>` : ''}
     ${imgs.length ? `<div class="cb-sec">产出的图</div><div class="wc-imgs">${imgs.map((f) => `<img src="${f.img}" title="${esc(f.rel)}" data-wopen="${esc(f.path)}">`).join('')}</div>` : ''}
@@ -563,6 +562,7 @@ async function projectAction(act, t) {
     if (s === 'done' && t.dataset.then !== 'stay') { const nx = p.stages[p.stages.indexOf(st) + 1]; if (nx && nx.status === 'pending') toast(`「${st.title}」完成了。下一个是「${nx.title}」，点「按顺序往下做」继续。`, 4000); }
   }
   if (act === 'rereview') return runStage(p, st, { reviewOnly: true });
+  if (act === 'refix' && st.lastFeedback) return runStage(p, st, st.lastFeedback);
   if (act === 'approve') { st.status = 'done'; st.note = ''; pact(p, '你', `确认通过了「${st.title}」`); await syncPlan(p); save(); renderProject(p); }
   if (act === 'reject') { const row = $('#pj-reject-row'); if (row) { row.style.display = 'flex'; $('#pj-feedback').focus(); } }
   if (act === 'reject-send') { const v = $('#pj-feedback').value.trim(); if (!v) return toast('写上要改什么'); pact(p, '你', `打回了「${st.title}」：${v.slice(0, 60)}`); await runStage(p, st, { feedback: `（来自用户「${S.userName}」的意见，优先级最高）\n${v}`, humanFeedback: true }); }

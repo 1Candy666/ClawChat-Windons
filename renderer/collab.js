@@ -103,7 +103,18 @@ function stopCollabIn(chat) {
   return n;
 }
 
-function callAgent(agent, sys, user, { run, attachments, temperature, onText, onReasoning, acct } = {}) {
+// connection dropped mid-way (common on long requests across borders): worth trying again
+const NET_FLAKY = /ERR_(CONNECTION|NETWORK|TIMED_OUT|HTTP2|EMPTY_RESPONSE|INCOMPLETE|SSL|QUIC|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED)|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|terminated|network error|other side closed/i;
+async function callAgent(agent, sys, user, opts = {}) {
+  let r;
+  for (let n = 0; n < 3; n++) {
+    r = await callAgentOnce(agent, sys, user, opts);
+    if (!r.error || r.aborted || opts.run?.stop || !NET_FLAKY.test(r.error)) return r;
+    if (n < 2) { opts.onRetry?.(n + 1, r.error); await new Promise((ok) => setTimeout(ok, (n + 1) * 5000)); if (opts.run?.stop) return r; }
+  }
+  return r;
+}
+function callAgentOnce(agent, sys, user, { run, attachments, temperature, onText, onReasoning, acct } = {}) {
   const bm = run?.m;
   if (bm?.budget && usageTotal(bm.usage) >= bm.budget) return Promise.reject(new CollabBudget());
   const llm = resolveLLM(agent);
