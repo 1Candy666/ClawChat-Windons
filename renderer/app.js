@@ -5,9 +5,10 @@
 const CLI_PRESETS = [
   { kind: 'codex', mark: 'Cx', markColor: '#111111', name: 'Codex（ChatGPT 订阅）', command: 'codex', model: '', effort: 'low', desc: '调用你电脑上的 Codex 命令行，走 ChatGPT 订阅额度，不用 API Key' },
   { kind: 'claude', mark: 'CC', markColor: '#D97757', name: 'Claude Code（实验性）', command: 'claude', model: '', effort: '', desc: '调用你电脑上的 Claude Code 命令行（claude -p），走 Claude 订阅额度' },
+  { kind: 'gemini', mark: 'Gm', markColor: '#3B6FE0', name: 'Gemini（命令行）', command: 'gemini', model: '', effort: '', desc: '调用你电脑上的 Gemini CLI（gemini -p），用你在里面登录的 Google 账号的额度；能看图、能动手' },
   { kind: 'qoder', mark: 'Qd', markColor: '#2F6BFF', name: 'Qoder（命令行）', command: 'qodercli', model: 'Efficient', effort: '', desc: '调用你电脑上的 qodercli，走 Qoder 账号的 credits；能看图。模型填 Efficient / Auto / Performance 等档位' },
 ];
-const CLI_KINDS = ['codex', 'claude', 'qoder'];
+const CLI_KINDS = ['codex', 'claude', 'qoder', 'gemini'];
 const isCli = (p) => p && CLI_KINDS.includes(p.kind);
 const isMuse = (p) => p && p.kind === 'muse';
 const PRESETS = [
@@ -826,19 +827,20 @@ function qoderModelMenu(p) {
 }
 
 function cliCardHTML(p) {
-  const codex = p.kind === 'codex', qoder = p.kind === 'qoder';
+  const codex = p.kind === 'codex', qoder = p.kind === 'qoder', gem = p.kind === 'gemini';
   const desc = codex ? '调用本机 <code>codex exec</code>，用你在 Codex 里登录的 ChatGPT 账号。只读模式运行，不会改你的文件。回复是整段出现的（不是逐字），一条一般要几秒到十几秒。'
+    : gem ? '调用本机 <code>gemini</code>（Google 的 Gemini CLI），用你在里面登录的 Google 账号的额度。能看图、能动手。需要先安装（npm i -g @google/gemini-cli），再在命令行里运行一次 gemini 完成登录。'
     : qoder ? '调用本机 <code>qodercli</code>，用你在 Qoder 里登录的账号，按 credits 计费。能看图。需要先安装（npm i -g @qoder-ai/qodercli）并运行 qodercli login。'
     : '调用本机 <code>claude -p</code>，用你在 Claude Code 里登录的账号。需要先安装 Claude Code 并登录。';
-  const prog = codex ? 'Codex' : qoder ? 'Qoder' : 'Claude Code';
+  const prog = codex ? 'Codex' : qoder ? 'Qoder' : gem ? 'Gemini CLI' : 'Claude Code';
   return `<div class="card" data-pcard="${p.id}" style="background:#fafbfb">
     <h3>${codex ? '🟢' : '🟠'} <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:220px">
       <span class="badge">订阅额度</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
     <div class="desc" style="margin:-4px 0 12px;font-size:12px">${desc}</div>
     <div class="grid2">
-      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : qoder ? 'qodercli' : 'claude'}"></div>
+      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : qoder ? 'qodercli' : gem ? 'gemini' : 'claude'}"></div>
       <div class="field" style="position:relative"><label>模型（留空 = 用 ${prog} 自己的默认设置）</label>
-        <div style="display:flex;gap:6px"><input data-pf="model" style="flex:1" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : qoder ? '例如 Efficient / Auto' : '例如 sonnet / opus'}">${qoder ? '<button class="btn" data-pact="qmodels" title="读取你的账号能用哪些模型">▾ 选择</button>' : ''}</div>
+        <div style="display:flex;gap:6px"><input data-pf="model" style="flex:1" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : qoder ? '例如 Efficient / Auto' : gem ? '留空 = 自动在 Pro 和 Flash 之间切换' : '例如 sonnet / opus'}">${qoder ? '<button class="btn" data-pact="qmodels" title="读取你的账号能用哪些模型">▾ 选择</button>' : ''}</div>
         ${qoder ? qoderModelMenu(p) : ''}</div>
     </div>
     ${codex ? `<div class="field"><label>思考强度（越低回得越快、越省额度；聊天用 low 就够）</label>
@@ -1085,7 +1087,7 @@ document.addEventListener('click', async (e) => {
       status.textContent = '检测中…';
       const r = await window.claw.cliCheck({ kind: p.kind, command: p.command });
       status.textContent = r.ok ? `✅ 已安装：${r.msg}　接着点「测试对话」确认已登录`
-        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : p.kind === 'qoder' ? '安装：npm i -g @qoder-ai/qodercli，然后运行 qodercli login' : '安装 Claude Code 后运行 claude 登录'}`;
+        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : p.kind === 'qoder' ? '安装：npm i -g @qoder-ai/qodercli，然后运行 qodercli login' : p.kind === 'gemini' ? '安装：npm i -g @google/gemini-cli，然后在命令行运行一次 gemini 用 Google 账号登录' : '安装 Claude Code 后运行 claude 登录'}`;
       return;
     }
     if (t.dataset.pact === 'test') {

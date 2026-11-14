@@ -172,7 +172,7 @@ function q(a) {
 
 function spawnCli(command, args, cwd) {
   return spawn(isWin ? q(command) : command, isWin ? args.map(q) : args, {
-    cwd, env: cliEnv(), shell: isWin, windowsHide: true,
+    cwd, env: { ...cliEnv(), GEMINI_CLI_TRUST_WORKSPACE: 'true' }, shell: isWin, windowsHide: true,
   });
 }
 
@@ -203,7 +203,7 @@ function flattenPrompt(messages) {
 
 // models a command-line agent offers to this account (qodercli prints "MODEL" then one name per line)
 ipcMain.handle('cli:models', (_e, { kind, command }) => new Promise((resolve) => {
-  const cmd = command || ({ claude: 'claude', qoder: 'qodercli' }[kind] || 'codex');
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[kind] || 'codex');
   let out = '', err = '', child;
   try { child = spawnCli(cmd, ['--list-models'], os.homedir()); } catch (e) { return resolve({ ok: false, msg: String(e.message) }); }
   const timer = setTimeout(() => { killTree(child); resolve({ ok: false, msg: '超时：30 秒没有返回' }); }, 30000);
@@ -218,7 +218,7 @@ ipcMain.handle('cli:models', (_e, { kind, command }) => new Promise((resolve) =>
 }));
 
 ipcMain.handle('cli:check', (_e, { kind, command }) => new Promise((resolve) => {
-  const cmd = command || ({ claude: 'claude', qoder: 'qodercli' }[kind] || 'codex');
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[kind] || 'codex');
   let out = '';
   let child;
   try { child = spawnCli(cmd, ['--version'], os.homedir()); } catch (err) { return resolve({ ok: false, msg: String(err.message) }); }
@@ -234,7 +234,13 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
   const cwd = cliWorkDir();
   let args, cmd;
   const lastFile = path.join(os.tmpdir(), `clawchat-${reqId}.txt`);
-  if (kind === 'qoder') {
+  if (kind === 'gemini') {
+    cmd = command || 'gemini';
+    // the conversation goes in on stdin (gemini -p combines it with the short prompt); default approval mode:
+    // in headless runs anything that would need approval is refused, so a chat cannot touch files
+    args = ['-p', '上面是我们的对话记录。请只输出你作为助手对最后一条消息的回复正文。', '-o', 'stream-json'];
+    if (model) args.push('-m', model);
+  } else if (kind === 'qoder') {
     cmd = command || 'qodercli';
     // chat only: no tools at all; the prompt goes in through a file so long chats and Chinese text survive the Windows command line
     // inside the CLI's own working folder: qodercli refuses to read outside its workspace without asking
@@ -271,7 +277,11 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
       buf = buf.slice(idx + 1);
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
-      if (kind === 'qoder') {
+      if (kind === 'gemini') {
+        if (j.type === 'message' && j.role === 'assistant' && j.content) { const t = String(j.content); if (j.delta) { streamed += t; send('llm:chunk', { reqId, delta: t }); } else finalText = t; }
+        else if (j.type === 'error' && j.severity !== 'warning') lastErr = j.message || 'Gemini 出错';
+        else if (j.type === 'result') { if (j.stats) usage = { in: j.stats.input_tokens || 0, out: j.stats.output_tokens || 0 }; if (j.status && j.status !== 'success') lastErr = lastErr || j.error?.message || 'Gemini 出错'; else if (streamed) finalText = streamed; }
+      } else if (kind === 'qoder') {
         if (j.type === 'result') { if (j.is_error) lastErr = j.result || j.subtype || 'Qoder 出错'; else finalText = j.result || finalText; if (j.total_credits != null) usage = { in: 0, out: 0, credits: j.total_credits }; }
       } else if (kind === 'claude') {
         const ev = j.event;
@@ -433,7 +443,7 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
   const send = (ch, payload) => {
     if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
   };
-  if (kind === 'codex' || kind === 'claude' || kind === 'qoder') return runCli(send, reqId, { kind, command, model, effort, messages });
+  if (['codex', 'claude', 'qoder', 'gemini'].includes(kind)) return runCli(send, reqId, { kind, command, model, effort, messages });
   if (kind === 'muse') return runMuse(send, reqId, { threadUrl, messages: attach.resolveMessages(messages, 'noimg').messages });
   const ctrl = new AbortController();
   controllers.set(reqId, ctrl);

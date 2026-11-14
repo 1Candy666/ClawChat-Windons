@@ -84,6 +84,17 @@ function describeItem(it, phase) {
 
 function buildArgs(job, lastFile) {
   const { kind, model, effort, dir, level, extraDirs = [], network } = job;
+  if (kind === 'gemini') {
+    // the task goes in on stdin; ClawChat's own folder (the trust list) is set per run through the environment
+    const args = ['-p', '上面是你的完整任务说明。请严格按里面的要求执行，完成后用中文简要汇报。', '-o', 'stream-json'];
+    if (job.sessionId) args.push('--resume', job.sessionId);
+    if (model) args.push('-m', model);
+    if (extraDirs.length) args.push('--include-directories', extraDirs.join(','));
+    // write/full: everything auto-approved (data stages must run Python); read: default mode, where any tool
+    // that needs approval is refused in a headless run, so the reviewer can read but not change anything
+    if (level !== 'read') args.push('--approval-mode', 'yolo');
+    return args;
+  }
   if (kind === 'qoder') {
     // the long prompt lives in a file (see startJob); the command line only points at it
     const args = ['-p', `你的完整任务说明在文件 ${job.promptFile} 里。先用 Read 工具完整读取它，然后严格按里面的要求执行。`, '-o', 'stream-json', '-w', dir];
@@ -136,7 +147,7 @@ function startJob(sender, job) {
   const copied = require('./attach').copyInto(job.attachments, job.dir);
   if (copied.length) job.prompt += `\n\n用户提供的附件已复制到工作文件夹：\n${copied.map((c) => '- ' + c).join('\n')}`;
   const lastFile = path.join(os.tmpdir(), `clawchat-work-${job.jobId}.txt`);
-  const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli' }[job.kind] || 'codex');
+  const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[job.kind] || 'codex');
   if (job.kind === 'qoder') {
     // prompt file outside the project folder, so it never ends up among the outputs
     // inside the work folder (a hidden .clawchat subfolder): qodercli won't read outside its workspace in -p mode
@@ -149,7 +160,7 @@ function startJob(sender, job) {
   const started = Date.now();
   let child;
   try {
-    child = spawn(isWin ? q(cmd) : cmd, isWin ? args.map(q) : args, { cwd: job.dir, env: cliEnv(), shell: isWin, windowsHide: true });
+    child = spawn(isWin ? q(cmd) : cmd, isWin ? args.map(q) : args, { cwd: job.dir, env: { ...cliEnv(), GEMINI_CLI_TRUST_WORKSPACE: 'true' }, shell: isWin, windowsHide: true });
   } catch (err) { return send({ type: 'done', error: String(err.message) }); }
   const rec = { child, aborted: false };
   jobs.set(job.jobId, rec);
@@ -168,6 +179,19 @@ function startJob(sender, job) {
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
       if (j.type === 'thread.started' && j.thread_id) sessionId = j.thread_id;
+      if (job.kind === 'gemini') {
+        if (j.session_id) sessionId = j.session_id;
+        if (j.type === 'tool_use') {
+          const p = j.parameters || {}, n = j.tool_name || '';
+          const target = p.file_path || p.absolute_path || p.path || p.command || p.pattern || JSON.stringify(p).slice(0, 120);
+          send({ type: 'log', entry: { kind: /write|edit|replace/i.test(n) ? 'file' : 'cmd', text: `▶ ${n} ${target}` } });
+          if ((p.file_path || p.absolute_path) && /write|edit|replace/i.test(n)) changed.add(path.resolve(job.dir, p.file_path || p.absolute_path));
+        } else if (j.type === 'tool_result' && j.status && j.status !== 'success') send({ type: 'log', entry: { kind: 'warn', text: `⚠ ${String(j.output || j.error?.message || '工具调用失败').slice(0, 160)}` } });
+        else if (j.type === 'message' && j.role === 'assistant' && j.content) { finalText = j.delta ? (finalText + j.content) : String(j.content); }
+        else if (j.type === 'error') { send({ type: 'log', entry: { kind: 'warn', text: '⚠ ' + String(j.message || '').slice(0, 200) } }); if (j.severity !== 'warning') lastErr = j.message; }
+        else if (j.type === 'result') { if (j.stats) usage = { in: j.stats.input_tokens || 0, out: j.stats.output_tokens || 0 }; if (j.status && j.status !== 'success') lastErr = lastErr || j.error?.message || 'Gemini 执行失败'; }
+        continue;
+      }
       if (job.kind === 'claude' || job.kind === 'qoder') {
         if (j.session_id) sessionId = j.session_id;
         if (j.type === 'system' && j.subtype === 'api_retry') send({ type: 'log', entry: { kind: 'warn', text: `⚠ 连接中断，第 ${j.attempt}/${j.max_retries} 次重试` } });
