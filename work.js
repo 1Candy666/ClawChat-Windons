@@ -84,6 +84,18 @@ function describeItem(it, phase) {
 
 function buildArgs(job, lastFile) {
   const { kind, model, effort, dir, level, extraDirs = [], network } = job;
+  if (kind === 'agy') {
+    // one stream-json user message on stdin; resume by conversation id
+    const args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
+    if (job.sessionId) args.push('--conversation', job.sessionId);
+    if (model) args.push('--model', model);
+    if (effort) args.push('--effort', effort);
+    for (const d of extraDirs) args.push('--add-dir', d);
+    // write/full: data stages must run Python, so approve everything; read: default policy, where edits
+    // and commands are soft-denied in a headless run and the reviewer can only read
+    if (level !== 'read') args.push('--dangerously-skip-permissions');
+    return args;
+  }
   if (kind === 'gemini') {
     // the task goes in on stdin; ClawChat's own folder (the trust list) is set per run through the environment
     const args = ['-p', '上面是你的完整任务说明。请严格按里面的要求执行，完成后用中文简要汇报。', '-o', 'stream-json'];
@@ -147,7 +159,7 @@ function startJob(sender, job) {
   const copied = require('./attach').copyInto(job.attachments, job.dir);
   if (copied.length) job.prompt += `\n\n用户提供的附件已复制到工作文件夹：\n${copied.map((c) => '- ' + c).join('\n')}`;
   const lastFile = path.join(os.tmpdir(), `clawchat-work-${job.jobId}.txt`);
-  const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[job.kind] || 'codex');
+  const cmd = job.command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini', agy: 'agy' }[job.kind] || 'codex');
   if (job.kind === 'qoder') {
     // prompt file outside the project folder, so it never ends up among the outputs
     // inside the work folder (a hidden .clawchat subfolder): qodercli won't read outside its workspace in -p mode
@@ -179,6 +191,22 @@ function startJob(sender, job) {
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
       if (j.type === 'thread.started' && j.thread_id) sessionId = j.thread_id;
+      if (job.kind === 'agy') {
+        const p = (j.event && j[j.event]) || j;
+        if (p.conversation_id) sessionId = p.conversation_id;
+        if (j.event === 'step_update' && p.step_type === 'tool' && p.state === 'DONE') {
+          const t = p.tool_info || {}, n = t.name || p.tool_name || '', a = t.parameters || {};
+          const target = a.file_path || a.path || a.absolute_path || a.command || a.CommandLine || a.pattern || JSON.stringify(a).slice(0, 120);
+          send({ type: 'log', entry: { kind: /write|edit|replace|create/i.test(n) ? 'file' : t.error ? 'warn' : 'cmd', text: `${t.error ? '⚠' : '▶'} ${n} ${target}${t.error ? '：' + String(t.error.message || t.error).slice(0, 120) : ''}` } });
+          const fp = a.file_path || a.absolute_path || a.path;
+          if (fp && !t.error && /write|edit|replace|create/i.test(n)) changed.add(path.resolve(job.dir, fp));
+        } else if (j.event === 'step_update' && p.step_type === 'agent_response' && p.text_delta) finalText += p.text_delta;
+        else if (j.event === 'result') {
+          if (p.usage) usage = { in: (p.usage.input_tokens || 0) + (p.usage.cache_read_tokens || 0), out: (p.usage.output_tokens || 0) + (p.usage.thinking_tokens || 0) };
+          if (p.status && p.status !== 'SUCCESS') lastErr = p.error?.message || p.error || `Antigravity 返回 ${p.status}`; else finalText = p.response || finalText;
+        }
+        continue;
+      }
       if (job.kind === 'gemini') {
         if (j.session_id) sessionId = j.session_id;
         if (j.type === 'tool_use') {
@@ -241,7 +269,7 @@ function startJob(sender, job) {
     send({ type: 'done', text: finalText, files: out, secs, usage, sessionId });
   });
   child.stdin.on('error', () => {});
-  child.stdin.end(job.kind === 'qoder' ? '' : job.prompt, 'utf8');
+  child.stdin.end(job.kind === 'qoder' ? '' : job.kind === 'agy' ? JSON.stringify({ event: 'user', message: { content: job.prompt } }) + '\n' : job.prompt, 'utf8');
 }
 
 function register() {

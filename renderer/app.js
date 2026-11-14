@@ -5,10 +5,11 @@
 const CLI_PRESETS = [
   { kind: 'codex', mark: 'Cx', markColor: '#111111', name: 'Codex（ChatGPT 订阅）', command: 'codex', model: '', effort: 'low', desc: '调用你电脑上的 Codex 命令行，走 ChatGPT 订阅额度，不用 API Key' },
   { kind: 'claude', mark: 'CC', markColor: '#D97757', name: 'Claude Code（实验性）', command: 'claude', model: '', effort: '', desc: '调用你电脑上的 Claude Code 命令行（claude -p），走 Claude 订阅额度' },
-  { kind: 'gemini', mark: 'Gm', markColor: '#3B6FE0', name: 'Gemini（命令行）', command: 'gemini', model: '', effort: '', desc: '调用你电脑上的 Gemini CLI（gemini -p），用你在里面登录的 Google 账号的额度；能看图、能动手' },
+  { kind: 'agy', mark: 'AG', markColor: '#3B6FE0', name: 'Antigravity（Google AI Pro）', command: 'agy', model: '', effort: '', desc: '调用你电脑上的 Antigravity CLI（agy），用你 Google 账号（AI Pro / Ultra 会员）的额度；能看图、能动手' },
+  { kind: 'gemini', mark: 'Gm', markColor: '#5B7FC7', name: 'Gemini CLI（需 API Key）', command: 'gemini', model: '', effort: '', desc: '调用你电脑上的 Gemini CLI。注意：2026 年 6 月起它不再接受 Google 账号登录（含 AI Pro），只能用付费的 Gemini API Key' },
   { kind: 'qoder', mark: 'Qd', markColor: '#2F6BFF', name: 'Qoder（命令行）', command: 'qodercli', model: 'Efficient', effort: '', desc: '调用你电脑上的 qodercli，走 Qoder 账号的 credits；能看图。模型填 Efficient / Auto / Performance 等档位' },
 ];
-const CLI_KINDS = ['codex', 'claude', 'qoder', 'gemini'];
+const CLI_KINDS = ['codex', 'claude', 'qoder', 'gemini', 'agy'];
 const isCli = (p) => p && CLI_KINDS.includes(p.kind);
 const isMuse = (p) => p && p.kind === 'muse';
 const PRESETS = [
@@ -822,26 +823,27 @@ function qoderModelMenu(p) {
   const stat = (m) => { const s = p.creditStats?.[m]; return s && s.n ? `实测平均 ${(s.sum / s.n).toFixed(2)} credits/次（${s.n} 次）` : ''; };
   return `<div class="qmenu" data-qmenu style="display:none">${p.models.map((m) => {
     const rate = QODER_RATE[m.toLowerCase()];
-    return `<button class="qm-item${m === p.model ? ' on' : ''}" data-qmodel="${esc(m)}"><b>${esc(m)}</b><span>${rate ? '倍率 ' + rate : '倍率未公布'}${stat(m) ? ' · ' + stat(m) : ''}</span></button>`;
-  }).join('')}<div class="desc" style="margin:6px 8px 4px;font-size:11.5px">倍率以 Auto 为 1.0×，来自 Qoder 文档；"实测"是 ClawChat 记下的你实际用掉的 credits。</div></div>`;
+    return `<button class="qm-item${m === p.model ? ' on' : ''}" data-qmodel="${esc(m)}"><b>${esc(m)}</b><span>${p.kind === 'qoder' ? (rate ? '倍率 ' + rate : '倍率未公布') : ''}${stat(m) ? (p.kind === 'qoder' ? ' · ' : '') + stat(m) : ''}</span></button>`;
+  }).join('')}${p.kind === 'qoder' ? '<div class="desc" style="margin:6px 8px 4px;font-size:11.5px">倍率以 Auto 为 1.0×，来自 Qoder 文档；"实测"是 ClawChat 记下的你实际用掉的 credits。</div>' : ''}</div>`;
 }
 
 function cliCardHTML(p) {
-  const codex = p.kind === 'codex', qoder = p.kind === 'qoder', gem = p.kind === 'gemini';
+  const codex = p.kind === 'codex', qoder = p.kind === 'qoder', gem = p.kind === 'gemini', agy = p.kind === 'agy';
   const desc = codex ? '调用本机 <code>codex exec</code>，用你在 Codex 里登录的 ChatGPT 账号。只读模式运行，不会改你的文件。回复是整段出现的（不是逐字），一条一般要几秒到十几秒。'
-    : gem ? '调用本机 <code>gemini</code>（Google 的 Gemini CLI），用你在里面登录的 Google 账号的额度。能看图、能动手。需要先安装（npm i -g @google/gemini-cli），再在命令行里运行一次 gemini 完成登录。'
+    : agy ? '调用本机 <code>agy</code>（Google 的 Antigravity CLI），用你 Google 账号的额度，AI Pro / Ultra 会员额度更高。能看图、能动手。需要先安装 Antigravity CLI，再在命令行运行一次 agy 用 Google 账号登录。'
+    : gem ? '调用本机 <code>gemini</code>（Gemini CLI）。注意：从 2026 年 6 月 18 日起，Gemini CLI 不再接受 Google 账号登录（包括 AI Pro / Ultra），只能用付费的 Gemini API Key（在系统环境变量里设置 GEMINI_API_KEY）。有 AI Pro 会员请改用上面的 Antigravity。'
     : qoder ? '调用本机 <code>qodercli</code>，用你在 Qoder 里登录的账号，按 credits 计费。能看图。需要先安装（npm i -g @qoder-ai/qodercli）并运行 qodercli login。'
     : '调用本机 <code>claude -p</code>，用你在 Claude Code 里登录的账号。需要先安装 Claude Code 并登录。';
-  const prog = codex ? 'Codex' : qoder ? 'Qoder' : gem ? 'Gemini CLI' : 'Claude Code';
+  const prog = codex ? 'Codex' : qoder ? 'Qoder' : gem ? 'Gemini CLI' : agy ? 'Antigravity' : 'Claude Code';
   return `<div class="card" data-pcard="${p.id}" style="background:#fafbfb">
     <h3>${codex ? '🟢' : '🟠'} <input data-pf="name" value="${esc(p.name)}" style="border:0;background:transparent;font-weight:600;font-size:15px;outline:none;width:220px">
       <span class="badge">订阅额度</span>${p.id === S.defaultProviderId ? '<span class="badge">默认</span>' : ''}</h3>
     <div class="desc" style="margin:-4px 0 12px;font-size:12px">${desc}</div>
     <div class="grid2">
-      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : qoder ? 'qodercli' : gem ? 'gemini' : 'claude'}"></div>
+      <div class="field"><label>命令（一般不用改）</label><input data-pf="command" value="${esc(p.command)}" placeholder="${codex ? 'codex' : qoder ? 'qodercli' : gem ? 'gemini' : agy ? 'agy' : 'claude'}"></div>
       <div class="field" style="position:relative"><label>模型（留空 = 用 ${prog} 自己的默认设置）</label>
-        <div style="display:flex;gap:6px"><input data-pf="model" style="flex:1" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : qoder ? '例如 Efficient / Auto' : gem ? '留空 = 自动在 Pro 和 Flash 之间切换' : '例如 sonnet / opus'}">${qoder ? '<button class="btn" data-pact="qmodels" title="读取你的账号能用哪些模型">▾ 选择</button>' : ''}</div>
-        ${qoder ? qoderModelMenu(p) : ''}</div>
+        <div style="display:flex;gap:6px"><input data-pf="model" style="flex:1" value="${esc(p.model)}" placeholder="${codex ? '例如 gpt-5.4' : qoder ? '例如 Efficient / Auto' : gem ? '留空 = 自动在 Pro 和 Flash 之间切换' : agy ? '留空 = 默认模型；点右边「选择」看可用的' : '例如 sonnet / opus'}">${qoder || agy ? '<button class="btn" data-pact="qmodels" title="读取你的账号能用哪些模型">▾ 选择</button>' : ''}</div>
+        ${qoder || agy ? qoderModelMenu(p) : ''}</div>
     </div>
     ${codex ? `<div class="field"><label>思考强度（越低回得越快、越省额度；聊天用 low 就够）</label>
       <select data-pf="effort">${['minimal', 'low', 'medium', 'high'].map((x) => `<option ${p.effort === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>` : ''}
@@ -1087,7 +1089,7 @@ document.addEventListener('click', async (e) => {
       status.textContent = '检测中…';
       const r = await window.claw.cliCheck({ kind: p.kind, command: p.command });
       status.textContent = r.ok ? `✅ 已安装：${r.msg}　接着点「测试对话」确认已登录`
-        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : p.kind === 'qoder' ? '安装：npm i -g @qoder-ai/qodercli，然后运行 qodercli login' : p.kind === 'gemini' ? '安装：npm i -g @google/gemini-cli，然后在命令行运行一次 gemini 用 Google 账号登录' : '安装 Claude Code 后运行 claude 登录'}`;
+        : `❌ ${r.msg}\n${p.kind === 'codex' ? '安装：npm i -g @openai/codex，然后运行 codex login' : p.kind === 'qoder' ? '安装：npm i -g @qoder-ai/qodercli，然后运行 qodercli login' : p.kind === 'gemini' ? '安装：npm i -g @google/gemini-cli，并设置 GEMINI_API_KEY 环境变量' : p.kind === 'agy' ? '安装 Antigravity CLI（见 antigravity.google），然后在命令行运行一次 agy 用 Google 账号登录' : '安装 Claude Code 后运行 claude 登录'}`;
       return;
     }
     if (t.dataset.pact === 'test') {

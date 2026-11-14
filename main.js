@@ -203,22 +203,24 @@ function flattenPrompt(messages) {
 
 // models a command-line agent offers to this account (qodercli prints "MODEL" then one name per line)
 ipcMain.handle('cli:models', (_e, { kind, command }) => new Promise((resolve) => {
-  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[kind] || 'codex');
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini', agy: 'agy' }[kind] || 'codex');
   let out = '', err = '', child;
-  try { child = spawnCli(cmd, ['--list-models'], os.homedir()); } catch (e) { return resolve({ ok: false, msg: String(e.message) }); }
+  try { child = spawnCli(cmd, kind === 'agy' ? ['models'] : ['--list-models'], os.homedir()); } catch (e) { return resolve({ ok: false, msg: String(e.message) }); }
   const timer = setTimeout(() => { killTree(child); resolve({ ok: false, msg: '超时：30 秒没有返回' }); }, 30000);
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (err += d));
   child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, msg: String(e.message) }); });
   child.on('close', () => {
     clearTimeout(timer);
-    const names = out.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && x !== 'MODEL').map((x) => x.replace(/\s+\(.*\)$/, ''));
+    const names = kind === 'agy'
+      ? [...new Set(out.split(/\r?\n/).map((x) => x.trim().split(/\s+/)[0]).filter((x) => x && /^[\w.\-:/]+$/.test(x) && !/^(model|slug|name|id)s?$/i.test(x)))]
+      : out.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && x !== 'MODEL').map((x) => x.replace(/\s+\(.*\)$/, ''));
     resolve(names.length ? { ok: true, models: names } : { ok: false, msg: (err.trim() || '没有返回任何模型').slice(0, 300) });
   });
 }));
 
 ipcMain.handle('cli:check', (_e, { kind, command }) => new Promise((resolve) => {
-  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini' }[kind] || 'codex');
+  const cmd = command || ({ claude: 'claude', qoder: 'qodercli', gemini: 'gemini', agy: 'agy' }[kind] || 'codex');
   let out = '';
   let child;
   try { child = spawnCli(cmd, ['--version'], os.homedir()); } catch (err) { return resolve({ ok: false, msg: String(err.message) }); }
@@ -228,13 +230,29 @@ ipcMain.handle('cli:check', (_e, { kind, command }) => new Promise((resolve) => 
   child.on('close', (code) => resolve(code === 0 ? { ok: true, msg: out.trim().split('\n')[0] } : { ok: false, msg: out.trim().slice(0, 300) || `找不到命令「${cmd}」` }));
 }));
 
+// Antigravity CLI (agy) stream-json: {"event": "...", "<event>": {...}}
+function agyEvent(j) {
+  const p = (j.event && j[j.event]) || j;
+  if (j.event === 'step_update' && p.step_type === 'agent_response' && p.text_delta) return { delta: p.text_delta, id: p.conversation_id };
+  if (j.event === 'step_update') return { step: p, id: p.conversation_id };
+  if (j.event === 'result') return { result: p, id: p.conversation_id };
+  return { id: p.conversation_id };
+}
+const agyInput = (prompt) => JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n';
+
 function runCli(send, reqId, { kind, command, model, effort, messages }) {
   const resolved = attach.resolveMessages(messages, kind === 'codex' || !kind ? 'cli' : 'noimg');
   const prompt = flattenPrompt(resolved.messages);
   const cwd = cliWorkDir();
   let args, cmd;
   const lastFile = path.join(os.tmpdir(), `clawchat-${reqId}.txt`);
-  if (kind === 'gemini') {
+  if (kind === 'agy') {
+    cmd = command || 'agy';
+    // the prompt goes in as one stream-json user message on stdin (no command-line length limit);
+    // default permissions: reads only, any edit or command is soft-denied in a headless run
+    args = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
+    if (model) args.push('--model', model);
+  } else if (kind === 'gemini') {
     cmd = command || 'gemini';
     // the conversation goes in on stdin (gemini -p combines it with the short prompt); default approval mode:
     // in headless runs anything that would need approval is refused, so a chat cannot touch files
@@ -277,7 +295,11 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
       buf = buf.slice(idx + 1);
       if (!line.startsWith('{')) continue;
       let j; try { j = JSON.parse(line); } catch { continue; }
-      if (kind === 'gemini') {
+      if (kind === 'agy') {
+        const ev = agyEvent(j);
+        if (ev.delta) { streamed += ev.delta; send('llm:chunk', { reqId, delta: ev.delta }); }
+        if (ev.result) { const r = ev.result; if (r.usage) usage = { in: (r.usage.input_tokens || 0) + (r.usage.cache_read_tokens || 0), out: (r.usage.output_tokens || 0) + (r.usage.thinking_tokens || 0) }; if (r.status && r.status !== 'SUCCESS') lastErr = r.error?.message || r.error || r.status; else finalText = r.response || streamed; }
+      } else if (kind === 'gemini') {
         if (j.type === 'message' && j.role === 'assistant' && j.content) { const t = String(j.content); if (j.delta) { streamed += t; send('llm:chunk', { reqId, delta: t }); } else finalText = t; }
         else if (j.type === 'error' && j.severity !== 'warning') lastErr = j.message || 'Gemini 出错';
         else if (j.type === 'result') { if (j.stats) usage = { in: j.stats.input_tokens || 0, out: j.stats.output_tokens || 0 }; if (j.status && j.status !== 'success') lastErr = lastErr || j.error?.message || 'Gemini 出错'; else if (streamed) finalText = streamed; }
@@ -321,7 +343,7 @@ function runCli(send, reqId, { kind, command, model, effort, messages }) {
     send('llm:done', { reqId, usage, replace: finalText && streamed !== finalText ? finalText : undefined });
   });
   child.stdin.on('error', () => {});
-  child.stdin.end(kind === 'qoder' ? '' : prompt, 'utf8');
+  child.stdin.end(kind === 'qoder' ? '' : kind === 'agy' ? agyInput(prompt) : prompt, 'utf8');
 }
 
 // ---------- Muse web bridge (drives the user's own logged-in muse.ai page) ----------
@@ -443,7 +465,7 @@ ipcMain.on('llm:stream', async (e, { reqId, baseUrl, apiKey, model, messages, te
   const send = (ch, payload) => {
     if (!e.sender.isDestroyed()) e.sender.send(ch, payload);
   };
-  if (['codex', 'claude', 'qoder', 'gemini'].includes(kind)) return runCli(send, reqId, { kind, command, model, effort, messages });
+  if (['codex', 'claude', 'qoder', 'gemini', 'agy'].includes(kind)) return runCli(send, reqId, { kind, command, model, effort, messages });
   if (kind === 'muse') return runMuse(send, reqId, { threadUrl, messages: attach.resolveMessages(messages, 'noimg').messages });
   const ctrl = new AbortController();
   controllers.set(reqId, ctrl);

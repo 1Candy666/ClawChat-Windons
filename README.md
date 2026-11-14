@@ -62,7 +62,7 @@
 
 | 方式 | 服务 |
 |---|---|
-| **订阅额度**（不用 API Key） | Codex（ChatGPT 订阅，调用本机 `codex`）、Claude Code（实验性，调用本机 `claude -p`）、Qoder（调用本机 `qodercli`，按 Qoder credits 计费，能看图）、Gemini CLI（调用本机 `gemini`，用 Google 账号的额度，能看图） |
+| **订阅额度**（不用 API Key） | Codex（ChatGPT 订阅，调用本机 `codex`）、Claude Code（实验性，调用本机 `claude -p`）、Qoder（调用本机 `qodercli`，按 Qoder credits 计费，能看图）、Antigravity CLI（调用本机 `agy`，用 Google 账号 / AI Pro 会员的额度，能看图）、Gemini CLI（只支持付费 API Key） |
 | **API Key**（OpenAI 兼容接口） | DeepSeek、Claude、OpenAI、Gemini、Grok、Meta Muse、Mistral、Kimi、通义千问、腾讯混元、豆包、文心、智谱 GLM、MiniMax、硅基流动、OpenRouter、Ollama（本地）、任意自定义 |
 | **网页会员**（实验性） | Muse：在后台驱动你已登录的 muse.ai 网页，用「旁聊」收发消息 |
 

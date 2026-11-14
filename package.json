@@ -1,6 +1,6 @@
 {
   "name": "clawchat",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "在 Windows 上和你的多个 AI 智能体单聊、拉群，并让它们动手干活",
   "main": "main.js",
   "scripts": {
